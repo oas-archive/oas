@@ -1,6 +1,6 @@
 """Local cover cache.
 
-Covers are downloaded once from the saved image URL and served from the Docker volume.
+Covers are downloaded once from the saved image URL and served from the local cover folder (settings.COVER_DIR).
 No anti-bot circumvention: a plain request with an honest User-Agent. When the source refuses,
 the API redirects the browser to the original URL, which behaves exactly as before caching existed.
 """
@@ -60,7 +60,7 @@ def check_url(url: str) -> None:
 
 
 class _CheckedRedirect(urllib.request.HTTPRedirectHandler):
-    """轉址時對新網址再跑一次 check_url，避免外部網址轉址到內部網路（127.0.0.1、Docker 主機、路由器等）。"""
+    """轉址時對新網址再跑一次 check_url，避免外部網址轉址到內部網路（127.0.0.1、路由器等）。"""
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         try:

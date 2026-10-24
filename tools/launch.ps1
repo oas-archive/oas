@@ -1,6 +1,6 @@
 ﻿# OAS 啟動器：由「OAS 入口」資料夾中的捷徑呼叫（隱藏視窗執行）。
 # 以獨立的應用程式視窗（Chrome / Edge 的 --app 模式、專用設定檔）開啟典藏館；
-# 服務直接在這台電腦上執行（不需要 Docker），視窗全部關閉後自動備份並結束服務。
+# 服務直接在這台電腦上執行，視窗全部關閉後自動備份並結束服務。
 # 資料位置：專案資料夾旁邊已有 data\oas.db 時沿用（資料庫與封面在 data\、備份在 backups\）；
 # 否則放在 %LOCALAPPDATA%\OAS（備份在其中的 backups\）。
 param([switch]$KeepRunning)  # 加上 -KeepRunning 則關閉視窗後不結束服務
@@ -127,7 +127,7 @@ if (-not $ready) {
     $server = Start-Server
     $deadline = (Get-Date).AddMinutes(1)
     while (-not (Test-Web)) {
-        if ($server.HasExited) { Show-Error "服務啟動失敗，詳細內容在 $(Join-Path $logDir 'server-error.log')。`n`n若是 8080 埠被占用（例如舊的 Docker 版還開著），請先關閉它再試一次。" }
+        if ($server.HasExited) { Show-Error "服務啟動失敗，詳細內容在 $(Join-Path $logDir 'server-error.log')。`n`n若是 8080 埠被占用（例如另一個典藏館或其他程式還開著），請先關閉它再試一次。" }
         if ((Get-Date) -gt $deadline) { Show-Error "服務 1 分鐘內沒有回應，詳細內容在 $(Join-Path $logDir 'server-error.log')。" }
         Start-Sleep -Milliseconds 500
     }

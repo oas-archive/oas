@@ -51,10 +51,6 @@
 
 需要 [Python](https://www.python.org/downloads/) 3.11 以上與 [Node.js](https://nodejs.org/) LTS。下載原始碼後執行 `tools\create-shortcut.ps1` 建立捷徑，第一次開啟會自動建立執行環境並打包網頁（約一兩分鐘）。
 
-### Docker
-
-`docker compose up --build -d`，開啟 `http://localhost:8080`。資料存在 Docker 磁碟區 `oas-next_oas-data`。
-
 ## 支援的網站
 
 | 網站 | 讀取方式 |

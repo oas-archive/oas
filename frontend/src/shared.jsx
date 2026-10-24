@@ -6,7 +6,7 @@ export const STATES = ['未讀', '閱讀中', '已完食', '暫時擱置', '棄�
 export const PALETTES = ['#8c82ff', '#d17c9f', '#55abb2', '#d79a60', '#8f79bd', '#c96f6d']
 export const EMPTY = { code: '', source_name: '其他網站', title: '', note: '', image_url: '', rating: 0, status: '未讀', tags: [] }
 
-// 資料服務連不上（Docker 還在啟動、剛被關閉）時通知畫面顯示橫幅；502–504 是網頁伺服器找不到資料服務。
+// 資料服務連不上（還在啟動、剛被關閉）時通知畫面顯示橫幅；502–504 是開發模式的 Vite 轉發找不到資料服務。
 const reportOffline = () => window.dispatchEvent(new Event('oas-offline'))
 export const api = (path, options = {}) => fetch(`/api${path}`, { headers: { 'Content-Type': 'application/json' }, ...options })
   .catch(() => { reportOffline(); throw new Error('連不上典藏館的資料服務') })

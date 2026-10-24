@@ -1,4 +1,4 @@
-"""由 API 直接提供打包好的網頁（取代 Docker 版的 nginx）：/assets 長期快取，其他路徑都回 index.html（單頁應用）。"""
+"""由 API 直接提供打包好的網頁，不需要另外的網頁伺服器：/assets 長期快取，其他路徑都回 index.html（單頁應用）。"""
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -35,7 +35,7 @@ def _public_file(root: Path, path: str) -> Path | None:
 
 
 def install(app: FastAPI, directory: Path) -> bool:
-    """directory 裡有 index.html 時掛上網頁並回傳 True；沒有（例如 Docker 版由 nginx 提供）則不做事。須在所有 API 之後呼叫。"""
+    """directory 裡有 index.html 時掛上網頁並回傳 True；沒有（例如還沒打包、開發時改用 npm run dev）則不做事。須在所有 API 之後呼叫。"""
     root = directory.resolve()
     index = root / "index.html"
     if not index.is_file():

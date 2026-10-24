@@ -164,7 +164,7 @@ export function OfflineBanner({ onBack }) {
   return <div className={`offline-banner${state === 'back' ? ' is-back' : ''}`} role="status">
     {state === 'back' ? <b>已重新連上典藏館，資料已重新載入。</b> : <>
       <b>典藏館的資料服務沒有回應，每 4 秒自動重試。</b>
-      <span>通常是 Docker 還在啟動或剛被關閉，等一下就好。超過一分鐘還沒恢復，請關掉典藏館視窗，再雙擊「OAS 典藏館」捷徑重新開啟。</span>
+      <span>通常是典藏館的服務還在啟動或剛被關閉，等一下就好。超過一分鐘還沒恢復，請關掉典藏館視窗，再雙擊「OAS 典藏館」捷徑重新開啟。</span>
     </>}
   </div>
 }

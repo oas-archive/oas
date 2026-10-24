@@ -7,8 +7,6 @@ dist/
 
 logs/
 
-# 手動快照（改用 Git 記錄版本後不再需要納入）
-.snapshots/
 .pytest_cache/
 .venv/
 /build/
