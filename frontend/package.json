@@ -1,0 +1,25 @@
+{
+  "name": "oas-next-web",
+  "private": true,
+  "version": "0.8.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@fontsource-variable/inter": "5.3.0",
+    "@fontsource-variable/noto-sans-tc": "5.3.1",
+    "@fontsource-variable/noto-serif-tc": "5.3.1",
+    "react": "19.1.0",
+    "react-dom": "19.1.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "4.5.2",
+    "vite": "6.3.5"
+  },
+  "overrides": {
+    "rollup": "4.40.0"
+  }
+}

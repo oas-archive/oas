@@ -1,0 +1,116 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- OAS 圖示（v0.9 定稿，A1-2a 酒紅書籤）：裝飾藝術燙金邊框、星座壓紋、燙金書口、強烈透光、粉色緞面書籤。光源：左上＋書頁內部。 -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0.6" y2="1"><stop offset="0" stop-color="#1d2244"/><stop offset="1" stop-color="#070a14"/></linearGradient>
+    <radialGradient id="ambient" cx="0.15" cy="0.05" r="0.7"><stop offset="0" stop-color="#8c82ff" stop-opacity="0.28"/><stop offset="1" stop-color="#8c82ff" stop-opacity="0"/></radialGradient>
+    <radialGradient id="leak" cx="0.5" cy="0.5" r="0.5"><stop offset="0" stop-color="#ffffff" stop-opacity="1"/><stop offset="0.25" stop-color="#d9ceff" stop-opacity="0.85"/><stop offset="0.6" stop-color="#9d8cff" stop-opacity="0.4"/><stop offset="1" stop-color="#8c82ff" stop-opacity="0"/></radialGradient>
+    <linearGradient id="ray" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#e9e2ff" stop-opacity="0.75"/><stop offset="1" stop-color="#8c82ff" stop-opacity="0"/></linearGradient>
+    <linearGradient id="leather" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#5a3680"/><stop offset="0.5" stop-color="#341f50"/><stop offset="1" stop-color="#170c26"/></linearGradient>
+    <linearGradient id="spine" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#180d26"/><stop offset="0.55" stop-color="#36214f"/><stop offset="1" stop-color="#241534"/></linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff3cf"/><stop offset="0.3" stop-color="#f0cd85"/><stop offset="0.65" stop-color="#c0903f"/><stop offset="1" stop-color="#83591f"/></linearGradient>
+    <linearGradient id="goldEdge" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#9c6d2c"/><stop offset="0.5" stop-color="#ffe9a8"/><stop offset="1" stop-color="#c79a4c"/></linearGradient>
+    <linearGradient id="pages" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#e4dbff"/><stop offset="1" stop-color="#ffffff"/></linearGradient>
+    <linearGradient id="ribbon" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#6e1f35"/><stop offset="0.45" stop-color="#d0506f"/><stop offset="1" stop-color="#561528"/></linearGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffffff" stop-opacity="0.26"/><stop offset="0.4" stop-color="#ffffff" stop-opacity="0.05"/><stop offset="1" stop-color="#ffffff" stop-opacity="0"/></linearGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2="1" y2="0"><stop offset="0.8" stop-color="#c9bcff" stop-opacity="0"/><stop offset="1" stop-color="#d8ceff" stop-opacity="0.65"/></linearGradient>
+    <filter id="grain" x="0" y="0" width="100%" height="100%"><feTurbulence type="fractalNoise" baseFrequency="1.15" numOctaves="3" seed="11"/><feColorMatrix values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.9 -0.25"/><feComposite in2="SourceGraphic" operator="in"/></filter>
+    <filter id="blur60"><feGaussianBlur stdDeviation="60"/></filter>
+    <filter id="blur24"><feGaussianBlur stdDeviation="24"/></filter>
+    <filter id="blur10"><feGaussianBlur stdDeviation="10"/></filter>
+    <filter id="emboss" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="2.5" result="b"/><feOffset in="b" dx="3" dy="5" result="lo"/>
+      <feFlood flood-color="#000" flood-opacity="0.6"/><feComposite in2="lo" operator="in" result="shadow"/>
+      <feMerge><feMergeNode in="shadow"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="deboss" x="-5%" y="-5%" width="110%" height="110%">
+      <feOffset dx="-2" dy="-2" in="SourceAlpha" result="up"/><feFlood flood-color="#000" flood-opacity="0.55"/><feComposite in2="up" operator="in" result="dark"/>
+      <feOffset dx="2" dy="2" in="SourceAlpha" result="dn"/><feFlood flood-color="#b89be0" flood-opacity="0.18"/><feComposite in2="dn" operator="in" result="lite"/>
+      <feMerge><feMergeNode in="lite"/><feMergeNode in="dark"/></feMerge>
+    </filter>
+    <clipPath id="tile"><rect width="1024" height="1024" rx="230"/></clipPath>
+    <clipPath id="cover"><path d="M296 214 H680 Q712 214 712 246 V806 Q712 838 680 838 H296 Q262 838 262 806 V246 Q262 214 296 214 Z"/></clipPath>
+  </defs>
+
+  <g clip-path="url(#tile)">
+    <rect width="1024" height="1024" fill="url(#bg)"/>
+    <rect width="1024" height="1024" fill="url(#ambient)"/>
+
+    <!-- 從書頁射出的光芒與光暈 -->
+    <g opacity="0.85">
+      <path d="M740 520 L1060 300 L1060 420 Z" fill="url(#ray)" filter="url(#blur10)"/>
+      <path d="M740 540 L1060 520 L1060 640 Z" fill="url(#ray)" filter="url(#blur10)" opacity="0.8"/>
+      <path d="M740 560 L1060 760 L1060 860 Z" fill="url(#ray)" filter="url(#blur10)" opacity="0.6"/>
+    </g>
+    <ellipse cx="748" cy="530" rx="190" ry="360" fill="url(#leak)" filter="url(#blur60)"/>
+
+    <g transform="rotate(-4 512 540)">
+      <!-- 投影 -->
+      <ellipse cx="500" cy="880" rx="290" ry="40" fill="#000" opacity="0.6" filter="url(#blur24)"/>
+
+      <!-- 書頂（燙金書口，略帶透視） -->
+      <path d="M296 214 L330 186 H716 Q740 186 752 200 L712 232 Z" fill="url(#goldEdge)"/>
+      <path d="M330 186 H716 Q740 186 752 200" fill="none" stroke="#fff6d8" stroke-width="3" opacity="0.8"/>
+
+      <!-- 右側書頁：強烈透光 -->
+      <path d="M700 226 L752 200 V804 L700 830 Z" fill="url(#pages)"/>
+      <g stroke="#b6a6e8" stroke-width="2" opacity="0.55"><line x1="716" y1="222" x2="716" y2="818"/><line x1="732" y1="214" x2="732" y2="810"/></g>
+      <path d="M722 240 L742 228 V790 L722 804 Z" fill="#ffffff" filter="url(#blur10)"/>
+      <path d="M728 270 L736 266 V760 L728 766 Z" fill="#ffffff"/>
+
+      <!-- 緞面書籤（從書頁底部垂下） -->
+      <path d="M598 820 C604 880 590 930 612 990 L652 990 C632 932 646 880 640 820 Z" fill="url(#ribbon)"/>
+      <path d="M612 990 L632 966 L652 990" fill="#0a0d18"/>
+      <path d="M606 830 C610 880 600 925 618 975" fill="none" stroke="#ffc2d0" stroke-width="4" opacity="0.6"/>
+
+      <!-- 封面 -->
+      <g clip-path="url(#cover)">
+        <rect x="262" y="214" width="450" height="624" fill="url(#leather)"/>
+        <rect x="262" y="214" width="450" height="624" fill="#ffffff" filter="url(#grain)" opacity="0.2"/>
+        <!-- 星座壓紋 -->
+        <g filter="url(#deboss)" fill="#000" stroke="#000" stroke-width="5" stroke-linecap="round">
+          <polyline points="402,322 470,362 536,334 604,386" fill="none"/>
+          <polyline points="420,700 486,662 560,690 624,646" fill="none"/>
+          <circle cx="402" cy="322" r="8"/><circle cx="470" cy="362" r="7"/><circle cx="536" cy="334" r="9"/><circle cx="604" cy="386" r="7"/>
+          <circle cx="420" cy="700" r="7"/><circle cx="486" cy="662" r="9"/><circle cx="560" cy="690" r="7"/><circle cx="624" cy="646" r="8"/>
+        </g>
+        <rect x="262" y="214" width="72" height="624" fill="url(#spine)"/>
+        <rect x="262" y="214" width="450" height="624" fill="url(#sheen)"/>
+        <rect x="262" y="214" width="450" height="624" fill="url(#rim)"/>
+        <g fill="url(#gold)" filter="url(#emboss)">
+          <rect x="268" y="300" width="60" height="9" rx="4.5"/><rect x="268" y="318" width="60" height="5" rx="2.5"/>
+          <rect x="268" y="730" width="60" height="5" rx="2.5"/><rect x="268" y="743" width="60" height="9" rx="4.5"/>
+        </g>
+      </g>
+      <path d="M296 214 H680 Q712 214 712 246 V806 Q712 838 680 838 H296 Q262 838 262 806 V246 Q262 214 296 214 Z" fill="none" stroke="#ffffff" stroke-opacity="0.14" stroke-width="3"/>
+
+      <!-- 裝飾藝術燙金邊框：雙線＋扇形角飾 -->
+      <g fill="none" stroke="url(#gold)" filter="url(#emboss)">
+        <rect x="368" y="262" width="300" height="528" rx="10" stroke-width="5"/>
+        <rect x="384" y="278" width="268" height="496" rx="6" stroke-width="2"/>
+        <path d="M368 316 A54 54 0 0 0 422 262 M368 300 A38 38 0 0 0 406 262" stroke-width="3"/>
+        <path d="M668 316 A54 54 0 0 1 614 262 M668 300 A38 38 0 0 1 630 262" stroke-width="3"/>
+        <path d="M368 736 A54 54 0 0 1 422 790 M368 752 A38 38 0 0 1 406 790" stroke-width="3"/>
+        <path d="M668 736 A54 54 0 0 0 614 790 M668 752 A38 38 0 0 0 630 790" stroke-width="3"/>
+      </g>
+
+      <!-- 中央徽記：放射細線＋圓環＋八芒星 -->
+      <g transform="translate(518 526)" filter="url(#emboss)">
+        <g stroke="url(#gold)" stroke-width="3" opacity="0.75">
+          <line x1="0" y1="-140" x2="0" y2="-104"/><line x1="0" y1="104" x2="0" y2="140"/><line x1="-140" y1="0" x2="-104" y2="0"/><line x1="104" y1="0" x2="140" y2="0"/>
+          <line x1="-96" y1="-96" x2="-74" y2="-74"/><line x1="96" y1="-96" x2="74" y2="-74"/><line x1="-96" y1="96" x2="-74" y2="74"/><line x1="96" y1="96" x2="74" y2="74"/>
+        </g>
+        <circle r="88" fill="none" stroke="url(#gold)" stroke-width="9"/>
+        <circle r="70" fill="none" stroke="url(#gold)" stroke-width="2.5" opacity="0.8"/>
+        <path d="M0 -58 L13 -13 L58 0 L13 13 L0 58 L-13 13 L-58 0 L-13 -13 Z" fill="url(#gold)"/>
+        <path d="M0 -36 L8 -8 L36 0 L8 8 L0 36 L-8 8 L-36 0 L-8 -8 Z" fill="url(#gold)" transform="rotate(45)" opacity="0.9"/>
+      </g>
+    </g>
+
+    <!-- 光中的星屑 -->
+    <g fill="#ffffff">
+      <path d="M842 300 C845 316 849 320 865 323 C849 326 845 330 842 346 C839 330 835 326 819 323 C835 320 839 316 842 300 Z" opacity="0.9"/>
+      <circle cx="900" cy="470" r="5" opacity="0.7"/><circle cx="820" cy="690" r="4" opacity="0.55"/>
+    </g>
+  </g>
+  <rect x="3" y="3" width="1018" height="1018" rx="228" fill="none" stroke="#ffffff" stroke-opacity="0.10" stroke-width="4"/>
+</svg>

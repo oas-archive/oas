@@ -1,0 +1,17 @@
+.env*
+*.pem
+*.key
+*.keystore
+*.jks
+*.out
+/data/
+__pycache__/
+*.pyc
+node_modules/
+dist/
+
+logs/
+
+.pytest_cache/
+.venv/
+/build/
