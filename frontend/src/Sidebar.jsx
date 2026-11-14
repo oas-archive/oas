@@ -35,9 +35,28 @@ export function useTidyCounts(refreshKey) {
 }
 
 export const backupText = status => !status ? '讀取中…' : status.backup ? `上次備份 ${sinceText(status.backup.at)}` : '尚未找到備份'
+// 側欄只顯示「補齊作品資訊」；補新收錄與手機讀頁在進度列（ProgressStrip）。整理 → 維護的備份區塊兩種都顯示
+export const refreshText = status => status?.refresh?.running ? `補資料 ${status.refresh.done}/${status.refresh.total}` : ''
 export const jobText = status => status?.intake?.running ? (status.intake.message || `補新收錄 ${status.intake.done}/${status.intake.total}`) : status?.refresh?.running ? `補資料 ${status.refresh.done}/${status.refresh.total}` : ''
 
-export default function Sidebar({ variant, onToggle, page, goTo, openById, onShowList, onPalette, onBackup, onShortcuts, onDuplicates, onAttention, onTagSuggest, tidyCounts, refreshKey,
+// 常駐的背景進度：「補資料 120／254・讀禁漫與 MissAV 30／90」，做完後顯示一下再消失；點一下到「整理 → 待整理」。
+// 電腦在側欄底部（迷你側欄是一個圖示按鈕），手機在底部分頁列上方。line 是 progress.js 的 useProgressLine()
+export function ProgressStrip({ line, variant, onOpen }) {
+  if (!line.shown) return null
+  const percent = Math.round(line.ratio * 100)
+  const label = `${line.text}${line.message ? `；${line.message}` : ''}，點一下到待整理`
+  const meter = line.active && <span className="progress-meter" aria-hidden="true"><span style={{ transform: `scaleX(${line.ratio})` }} /></span>
+  if (variant === 'mini') return <button type="button" className="nav-progress-mini" onClick={onOpen} title={label} aria-label={label}>
+    <i aria-hidden="true">{line.active ? '◔' : '✓'}</i><span>{line.active ? `${percent}%` : '做完了'}</span>{meter}
+  </button>
+  return <button type="button" className={`progress-strip is-${variant}${line.active ? '' : ' is-finished'}`} onClick={onOpen} title={label} aria-label={label}>
+    <span className="progress-text" aria-live="polite">{line.text}</span>
+    {variant === 'full' && line.message && <small className="progress-note">{line.message}</small>}
+    {meter}
+  </button>
+}
+
+export default function Sidebar({ variant, onToggle, page, goTo, openById, onShowList, onPalette, onBackup, onShortcuts, onDuplicates, onAttention, onTagSuggest, tidyCounts, refreshKey, progressLine,
   collections, activeCollection, onCollection, onCreateCollection, onNewSmart, onRenameCollection, onDeleteCollection }) {
   const [reading, setReading] = useState([])
   const { duplicates: duplicateCount = 0, attention: attentionCount = 0, rules: suggestCount = 0 } = tidyCounts
@@ -87,7 +106,7 @@ export default function Sidebar({ variant, onToggle, page, goTo, openById, onSho
     if (editing.name.trim() && await onRenameCollection(editing.id, editing.name.trim())) setEditing(null)
   }
 
-  const job = jobText(status)  // 快取封面、巡檢來源在背景默默做，進度在「整理 → 維護」，不佔側欄
+  const job = refreshText(status)  // 快取封面、巡檢來源在背景默默做，進度在「整理 → 維護」，不佔側欄
   const backupLine = backupText(status)
   const readingShown = reading.slice(0, moreReading ? READING_LONG : READING_SHORT)
   const recentShown = recent.slice(0, moreRecent ? RECENT_LONG : RECENT_SHORT)
@@ -108,6 +127,7 @@ export default function Sidebar({ variant, onToggle, page, goTo, openById, onSho
       {collections.length > 0 && <button type="button" onClick={onToggle} className={activeCollection ? 'is-active' : ''} title="展開側欄查看書單"><i aria-hidden="true">▤</i><span>書單</span></button>}
     </nav>
     <div className="nav-rail nav-rail-bottom">
+      {progressLine && <ProgressStrip line={progressLine} variant="mini" onOpen={onAttention} />}
       <button type="button" className="for-keyboard" onClick={onPalette}><i aria-hidden="true">⌕</i><span>指令</span></button>
       <button type="button" onClick={onBackup} title={backupLine}><i aria-hidden="true">↧</i><span>備份</span><b className={`nav-dot ${status?.backup ? 'is-ok' : 'is-warn'}`} aria-label={backupLine} /></button>
     </div>
@@ -189,6 +209,7 @@ export default function Sidebar({ variant, onToggle, page, goTo, openById, onSho
       </div>
 
       <div className="nav-bottom">
+        {progressLine && <ProgressStrip line={progressLine} variant="full" onOpen={pick(onAttention)} />}
         <button type="button" className="for-keyboard" onClick={pick(onPalette)}><i aria-hidden="true">⌕</i>指令面板<kbd>Ctrl K</kbd></button>
         <button type="button" onClick={pick(onBackup)}><i aria-hidden="true">↧</i>備份中心</button>
         <button type="button" className="for-keyboard" onClick={pick(onShortcuts)}><i aria-hidden="true">?</i>快捷鍵<kbd>?</kbd></button>

@@ -1,4 +1,4 @@
-"""作品：列表、單件、新增、修改、快速評分、開啟紀錄、改用其他來源、批次編輯、刪除、合併重複。"""
+"""作品：列表、單件、新增、修改、快速評分、開啟紀錄、改用其他來源、補上空白欄位、批次編輯、刪除、合併重複。"""
 from datetime import datetime, timezone
 from typing import Literal
 from urllib.parse import urlsplit
@@ -7,12 +7,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm.attributes import set_committed_value
 
 from .. import alternatives, covers, graph as graph_module, insights, intake, metadata, refresh, search, undo
 from ..archive import assign_tags, normalise_tags, serialise
-from ..database import Resource, Source
+from ..database import CoverCache, Resource, Source
 from ..deps import db_session, resource_filters
-from ..schemas import BatchInput, MergeInput, QuickInput, RelinkInput, ResourceInput, dump
+from ..schemas import BatchInput, FillBlanksInput, MergeInput, QuickInput, RelinkInput, ResourceInput, dump
 
 router = APIRouter(prefix="/api/resources")
 
@@ -183,9 +184,53 @@ def mark_opened(resource_id: int, db: Session = Depends(db_session)):
     return serialise(resource)
 
 
-@router.get("/{resource_id}/alternatives")
+def cover_missing(db: Session, resource: Resource) -> bool:
+    """作品有封面網址，但等於沒有封面：抓那個網址失敗過，或封面類作品（漫畫、影片…）只拿到網站圖示。"""
+    entry = db.get(CoverCache, covers.url_hash(resource.image_url))
+    return (entry is not None and entry.status == "failed") or (resource.image_kind == "icon" and resource.kind in metadata.COVER_KINDS)
+
+
+@router.post("/{resource_id}/fill-blanks")
+def fill_blanks(resource_id: int, payload: FillBlanksInput, db: Session = Depends(db_session)):
+    """分享或書籤帶來的作品已在典藏中，使用者按了「補上它的空白欄位」：標題、封面只補空白的，標籤只新增（refresh.apply），
+    不覆蓋已整理過的內容。原本的封面網址抓不到（見 cover_missing）時也換成這次的。
+
+    這次的封面使用者剛在表單裡看到（預覽不看快取的失敗紀錄），所以先前抓這個網址失敗的紀錄（24 小時內不重抓）清掉，
+    作品頁才會立刻重抓，不會跳過去後封面還是空白。回傳作品，另附 filled：補了哪些（title、cover、tags、categorised）。
+    """
+    resource = db.get(Resource, resource_id)
+    if resource is None:
+        raise HTTPException(404, "找不到作品")
+    image = payload.image_url.strip()
+    if not image.startswith(("http://", "https://")):
+        image = ""
+    if image and resource.image_url and image != resource.image_url and cover_missing(db, resource):
+        # 和 refresh.apply 一樣直接更新，保留 updated_at；接著 apply 會看到空白的封面欄位而補上
+        table = Resource.__table__
+        db.execute(table.update().where(table.c.id == resource.id).values(image_url="", image_kind="", updated_at=resource.updated_at))
+        set_committed_value(resource, "image_url", "")
+        set_committed_value(resource, "image_kind", "")
+    changes = refresh.apply(db, resource, {"title": payload.title.strip(), "image_url": image, "tags": payload.tags, "categories": payload.tag_categories})
+    if changes["changed"]:
+        resource.updated_at = datetime.now(timezone.utc)  # 使用者動手補的：和編輯存檔一樣排到「最近更新」前面
+    db.commit()
+    if resource.image_url:
+        entry = db.get(CoverCache, covers.url_hash(resource.image_url))
+        if entry is not None and entry.status == "failed" and resource.image_url == image:
+            db.delete(entry)
+            db.commit()
+        covers.schedule(resource.image_url)
+    db.refresh(resource)
+    filled = {key: changes[key] for key in ("title", "cover", "tags", "categorised")}
+    return {**covers.with_ratios(db, [serialise(resource)])[0], "filled": filled}
+
+
+@router.post("/{resource_id}/alternatives")
 def find_alternatives(resource_id: int, q: str = "", db: Session = Depends(db_session)):
-    """來源失效時，到 nhentai 與紳士漫畫搜尋同名作品；q 留空時由標題自動整理關鍵字。"""
+    """來源失效時，到 nhentai 與紳士漫畫搜尋同名作品；q 留空時由標題自動整理關鍵字。
+
+    用 POST：會連外，只讓典藏館自己的網頁觸發（理由同 /attention/same-code）。
+    """
     resource = db.get(Resource, resource_id)
     if resource is None:
         raise HTTPException(404, "找不到作品")

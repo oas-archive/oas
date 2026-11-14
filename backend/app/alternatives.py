@@ -122,8 +122,19 @@ def _owned(db: Session, results: list[dict]) -> None:
         row["owned_id"] = owned.get((row["source_name"], row["code"]))
 
 
+def keyword(resource: Resource, query: str | None) -> str:
+    """實際拿去搜尋的關鍵字。畫面的搜尋欄先填好這件的標題（沒有標題就填編號）：
+    送來的是原本的標題時照樣整理（去掉漢化組、場次等）；是純數字的編號時不當關鍵字（只會搜到不相干的作品），只比對同編號。"""
+    text = (query or "").strip()
+    if not text or text == (resource.title or "").strip():
+        return search_query(resource.title)
+    if text == (resource.code or "").strip() and text.isdigit():
+        return ""
+    return text
+
+
 def find(db: Session, resource: Resource, query: str | None = None) -> dict:
-    query = (query or "").strip() or search_query(resource.title)
+    query = keyword(resource, query)
     tasks = [task for _, _, task in same_code_tasks(db, resource)]
     if not query and not tasks:
         return {"query": "", "results": [], "errors": ["沒有標題可搜尋，請輸入關鍵字（作品名、作者或社團）"]}

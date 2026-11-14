@@ -116,7 +116,9 @@ export const titleFor = item => item?.title || item?.code || '未命名典藏'
 export const shortTitle = item => item?.short_title || titleFor(item)
 // 封面網址帶圖片網址的雜湊當版本：只有換封面才重抓（瀏覽器會快取七天）；改標題、標籤不必重新下載，換封面也不會看到舊圖
 const coverVersion = url => { let hash = 0; for (let index = 0; index < url.length; index++) hash = (hash * 31 + url.charCodeAt(index)) | 0; return (hash >>> 0).toString(36) }
-export const coverSrc = (item, width) => item?.id && item.image_url ? `/api/covers/${item.id}?v=${coverVersion(item.image_url)}${width ? `&w=${width}` : ''}` : item?.image_url
+// 畫面不直接連外部網站（外部網址可能轉址回手機上的其他 App，帶走通行碼），還沒收錄的圖片也由後端抓；CSP 也只准本機圖片
+export const imageSrc = url => /^https?:/i.test(url || '') ? `/api/covers/preview?url=${encodeURIComponent(url)}` : url
+export const coverSrc = (item, width) => item?.id && item.image_url ? `/api/covers/${item.id}?v=${coverVersion(item.image_url)}${width ? `&w=${width}` : ''}` : imageSrc(item?.image_url)
 // 環境光：直接寫入 CSS 變數，不經 React 狀態，避免懸停時整頁重新渲染；捲動中不切換，避免捲動時連續重繪。
 // 懸停只換背景光（.oas-ambient 自己的 --glow，漸變過去）；改 :root 的 --ambient 會讓整頁所有元素重算樣式，只在開啟作品、儲存時（force）才換。
 let lastScrollAt = 0

@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { canReadPages, readPage } from './pageReader.js'
-import { api, colourFor, coverRatio, coverSrc, Dropdown, EMPTY, groupTags, hideBroken, CoverFace, isFaceCover, isEditing, KINDS, loadTagCategories, Stars, STATUS_COLOURS, statusOptions, shortTitle, titleFor, TOUCH, ownsSideSwipe, whenIdle, ask, confirmLeave, useFocusTrap } from './shared.jsx'
+import { api, colourFor, coverRatio, coverSrc, Dropdown, EMPTY, groupTags, hideBroken, CoverFace, isFaceCover, isEditing, KINDS, loadTagCategories, Stars, STATUS_COLOURS, statusOptions, shortTitle, titleFor, TOUCH, ownsSideSwipe, whenIdle, ask, confirmLeave, useFocusTrap, imageSrc } from './shared.jsx'
 
 const formatDate = value => {
   if (!value) return ''
@@ -71,7 +71,7 @@ export const playShowcaseClose = target => {
 
 // 展示頁：取代右側抽屜。左側完整比例的封面，右側預設為閱讀模式；按「編輯」或 E 才切換為表單。
 // 封面從卡片位置放大進場（flipFrom 是 App 記下的卡片位置）、關閉時縮回原卡片（playShowcaseClose）。
-export default function Showcase({ item, link, prev, next, direction = 0, flipFrom, coverHint, warm = false, dirtyRef, onNavigate, onClose, onQuick, onSave, onRemove, onTag, onVisit, onOpenDuplicate, onRelinked, collections = [], onMembership, onCreateCollection, onBulk }) {
+export default function Showcase({ item, link, prev, next, direction = 0, flipFrom, coverHint, warm = false, dirtyRef, onNavigate, onClose, onQuick, onSave, onRemove, onTag, onVisit, onOpenDuplicate, onFillBlanks, onRelinked, collections = [], onMembership, onCreateCollection, onBulk }) {
   const [mode, setMode] = useState(item.id ? 'view' : 'edit')
   const [related, setRelated] = useState(null)
   const [loadedSrc, setLoadedSrc] = useState('')
@@ -265,9 +265,10 @@ export default function Showcase({ item, link, prev, next, direction = 0, flipFr
 
     <div className="showcase-stage" key={item.id ?? 'new'} data-direction={direction > 0 ? 'next' : direction < 0 ? 'prev' : 'none'}>
       <figure className="showcase-cover" style={{ aspectRatio: `1 / ${ratio}` }}>
-        {mode === 'edit' && preview && preview !== item.image_url ? <img src={preview} alt="" onError={hideBroken} /> : isFaceCover(item) ? <CoverFace item={item} width={480} /> : item.image_url ? <>
-          <img src={firstSrc} alt="" onError={hideBroken} />
-          {settled && !showsFull && <img className={`is-full${loadedSrc === coverSrc(item) ? ' is-loaded' : ''}`} src={coverSrc(item)} alt="" decoding="async" onLoad={event => setLoadedSrc(event.currentTarget.getAttribute('src'))} onError={hideBroken} />}
+        {/* 圖片以網址為 key：載入失敗被 hideBroken 藏起來的那張，換成新的封面網址（補上空白欄位、讀到作品頁）時要換一個新元素，否則新封面也看不到 */}
+        {mode === 'edit' && preview && preview !== item.image_url ? <img key={preview} src={imageSrc(preview)} alt="" onError={hideBroken} /> : isFaceCover(item) ? <CoverFace item={item} width={480} /> : item.image_url ? <>
+          <img key={firstSrc} src={firstSrc} alt="" onError={hideBroken} />
+          {settled && !showsFull && <img key={coverSrc(item)} className={`is-full${loadedSrc === coverSrc(item) ? ' is-loaded' : ''}`} src={coverSrc(item)} alt="" decoding="async" onLoad={event => setLoadedSrc(event.currentTarget.getAttribute('src'))} onError={hideBroken} />}
         </> : <span>OAS<small>尚未設定封面</small></span>}
       </figure>
 
@@ -309,7 +310,7 @@ export default function Showcase({ item, link, prev, next, direction = 0, flipFr
                 {entry.shared?.length > 0 && <small>{entry.shared.map(tag => `#${tag}`).join(' ')}</small>}
               </button>)}</div>}
           </section>
-        </> : <EditForm item={item} link={link} onBulk={onBulk} onPreview={setPreview} onOpenDuplicate={onOpenDuplicate} dirtyRef={dirtyRef} onCancel={async () => { if (dirtyRef?.current && !await confirmLeave()) return; if (dirtyRef) dirtyRef.current = false; if (item.id) setMode('view'); else onClose() }} onSave={async payload => { if (await onSave(payload)) setMode('view') }} onRemove={onRemove} />}
+        </> : <EditForm item={item} link={link} onBulk={onBulk} onPreview={setPreview} onOpenDuplicate={onOpenDuplicate} onFillBlanks={onFillBlanks} dirtyRef={dirtyRef} onCancel={async () => { if (dirtyRef?.current && !await confirmLeave()) return; if (dirtyRef) dirtyRef.current = false; if (item.id) setMode('view'); else onClose() }} onSave={async payload => { const saved = await onSave(payload); if (saved) setMode('view'); return saved }} onRemove={onRemove} />}
       </section>
     </div>
     {mode === 'view' && <p className="showcase-keys" aria-hidden="true"><kbd>←</kbd><kbd>→</kbd> 切換　<kbd>1</kbd>–<kbd>5</kbd> 評分　<kbd>E</kbd> 編輯　<kbd>Esc</kbd> 關閉</p>}
@@ -360,20 +361,24 @@ function CollectionMenu({ item, collections, onMembership, onCreate }) {
 }
 
 // 來源失效：標記失效，比對同一個編號在 N 網、紳士、禁漫有沒有作品，並用標題到 N 網、紳士搜尋；選中後改用新來源（舊連結會記在筆記裡）。
+// 搜尋欄一打開就填好這件的標題（沒有標題就填編號），不留白、搜尋完也不換成別的字；實際拿去搜的關鍵字由伺服器整理（alternatives.keyword），不同時顯示在下面
+const altQuery = item => (item.title || '').trim() || item.code || ''
 function AlternativesPanel({ item, reveal, onQuick, onRelinked, onOpenOwned, onClose }) {
   const panel = useRef(null)
-  const [query, setQuery] = useState('')
+  const [query, setQuery] = useState(() => altQuery(item))
   const [data, setData] = useState(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const searchSeq = useRef(0)  // 連按搜尋、切換作品時，只採用最後一次的結果
   const search = async text => {
+    const seq = ++searchSeq.current
     setBusy(true); setError('')
     try {
-      const result = await api(`/resources/${item.id}/alternatives${text !== undefined ? `?q=${encodeURIComponent(text)}` : ''}`)
-      setData(result); setQuery(result.query)
-    } catch (failure) { setError(failure.message) } finally { setBusy(false) }
+      const result = await api(`/resources/${item.id}/alternatives?q=${encodeURIComponent(text)}`, { method: 'POST' })
+      if (seq === searchSeq.current) setData({ ...result, sent: text.trim() })
+    } catch (failure) { if (seq === searchSeq.current) setError(failure.message) } finally { if (seq === searchSeq.current) setBusy(false) }
   }
-  useEffect(() => { search() }, [item.id])
+  useEffect(() => { const text = altQuery(item); setQuery(text); setData(null); search(text) }, [item.id])
   useEffect(() => { if (reveal) panel.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }) }, [reveal])  // 按了按鈕要看得到面板出現
   const relink = async row => {
     if (!await ask(`${row.unconfirmed ? '注意：這個候選只確認到封面，作品可能已下架或是章節編號，請先點標題到網站確認。\n\n' : ''}改用「${row.source_name}」的這一件？
@@ -395,11 +400,12 @@ ${row.title}
       <button type="submit" className="ghost" disabled={busy}>{busy ? '搜尋中…' : '搜尋'}</button>
     </form>
     {busy && !data && <p className="alt-note">正在比對同編號、搜尋同名作品…</p>}
+    {data && !busy && data.query && data.query !== data.sent && <p className="alt-note">以「{data.query}」搜尋（去掉漢化組、場次等）</p>}
     {error && <p className="alt-note is-warn">{error}</p>}
     {data?.errors?.map(message => <p key={message} className="alt-note">{message}</p>)}
     {data && !busy && data.results.length === 0 && <p className="alt-note">{data.query ? '找不到同名作品，可以換個關鍵字（例如只留作品名，或改用日文、英文原名）。' : 'N 網、紳士、禁漫都沒有同一個編號。這件沒有標題，在上面輸入作品名、作者或社團再搜尋。'}</p>}
     {data && data.results.length > 0 && <div className="alt-grid">{data.results.map(row => <article key={`${row.source_name}-${row.code}`} className="alt-card">
-      <i>{row.thumb && <img src={row.thumb} alt="" loading="lazy" referrerPolicy="no-referrer" onError={hideBroken} />}</i>
+      <i>{row.thumb && <img src={imageSrc(row.thumb)} alt="" loading="lazy" referrerPolicy="no-referrer" onError={hideBroken} />}</i>
       <div>
         <small>{row.source_name}{row.same_code ? `（同一個編號 ${row.code}${row.unconfirmed ? '，未確認' : ''}）` : ''}{row.pages ? `，${row.pages} 頁` : ''}</small>
         <a href={row.url} target="_blank" rel="noreferrer noopener" title="在來源網站開啟確認">{row.title}</a>
@@ -409,8 +415,24 @@ ${row.title}
   </section>
 }
 
-function EditForm({ item, link, dirtyRef, onCancel, onSave, onRemove, onPreview, onOpenDuplicate, onBulk }) {
+// 分享進來時在背景讀作品頁（手機 App）：回傳 /metadata 依網站規則解析的結果；讀不到（逾時、卡在防護驗證）回傳 null
+const readSharedPage = async (pageUrl, sourceUrl, title) => {
+  const html = await readPage(pageUrl)
+  return html ? api('/metadata', { method: 'POST', body: JSON.stringify({ url: sourceUrl, html, title }) }).catch(() => null) : null
+}
+// 背景讀到的資料併進要補的值：空白或還沒改過（和表單剛開時 base 一樣）的標題、封面換成讀到的，標籤與分類取聯集
+const mergeRead = (values, base, info) => {
+  if (!info?.title) return values
+  const fresh = key => !values[key] || values[key] === base[key]
+  return {
+    ...values, title: fresh('title') ? info.title : values.title, image_url: fresh('image_url') && info.image_url ? info.image_url : values.image_url,
+    tags: [...new Set([...values.tags, ...(info.tags || [])])], tag_categories: { ...values.tag_categories, ...(info.categories || {}) },
+  }
+}
+
+function EditForm({ item, link, dirtyRef, onCancel, onSave, onRemove, onPreview, onOpenDuplicate, onFillBlanks, onBulk }) {
   const [form, setForm] = useState({ ...EMPTY, ...item, tags: (item.tags || []).join(', ') })
+  const opened = useRef(form)  // 表單剛開時的值：背景讀到作品頁時，只換掉還沒改過的欄位
   const [url, setUrl] = useState(item.source_url || link || '')
   // 分享進來時已讀過作品頁：重複與「可能是另一個版本」（例如同一本在別的網站收過）直接顯示
   const [lookup, setLookup] = useState(item.duplicate ? { duplicate: item.duplicate } : item.similar?.length ? { similar: item.similar } : null)
@@ -430,58 +452,91 @@ function EditForm({ item, link, dirtyRef, onCancel, onSave, onRemove, onPreview,
     setBusy(true)
     try {
       let info = await api('/metadata', { method: 'POST', body: JSON.stringify({ url: url.trim() }) })
-      if (!info.title && canReadPages()) {  // 伺服器讀不到（禁漫、MissAV 等有防護）：手機 App 改用看不到的瀏覽器讀
+      if (!info.title && canReadPages()) {  // 伺服器讀不到：手機 App 改用看不到的瀏覽器讀
         setLookup({ ...info, message: '伺服器讀不到，改用手機的瀏覽器讀取中…', blocked: false })
         const html = await readPage(info.url || url.trim())
         if (html) info = await api('/metadata', { method: 'POST', body: JSON.stringify({ url: url.trim(), html }) })
         if (!info.title) info = { ...info, message: info.message || '手機的瀏覽器也沒讀到（可能卡在網站的防護驗證），可以打開作品頁再分享一次' }
       }
-      setLookup(info)
-      if (info.url && info.url !== url.trim()) setUrl(info.url)  // 輸入純數字時換成完整網址，讓你看到收錄的是哪一頁
-      setForm(current => {
-        const next = { ...current }
-        if (!item.id) { next.source_name = info.source_name; next.code = info.code }
-        // 新收錄直接帶入；編輯既有作品時只補空白欄位、標籤取聯集，不覆蓋你已整理過的內容。
-        if (info.title && (!item.id || !current.title.trim())) next.title = info.title
-        if (info.image_url && (!item.id || !current.image_url.trim())) next.image_url = info.image_url
-        if (info.tags.length) {
-          const existing = current.tags.split(/[,，]/).map(value => value.trim()).filter(Boolean)
-          next.tags = [...new Set([...existing, ...info.tags])].join(', ')
-        }
-        return next
-      })
+      applyInfo(info)
     } catch (error) { setLookup({ message: error.message }) } finally { setBusy(false) }
   }
-  const submit = event => {
+  // base：分享時背景讀到的（表單剛開時的值）。有 base 時只換掉空白或還沒改過的欄位，你先動手改的保留
+  const applyInfo = (info, base = null) => {
+    setLookup(info)
+    if (!base && info.url && info.url !== url.trim()) setUrl(info.url)  // 輸入純數字時換成完整網址，讓你看到收錄的是哪一頁
+    setForm(current => {
+      const next = { ...current }
+      // 新收錄直接帶入；編輯既有作品時只補空白欄位、標籤取聯集，不覆蓋你已整理過的內容。
+      const fresh = key => !String(current[key] || '').trim() || (base ? current[key] === base[key] : !item.id)
+      if (!item.id && (!base || current.code === base.code)) { next.source_name = info.source_name; next.code = info.code }
+      if (info.title && fresh('title')) next.title = info.title
+      if (info.image_url && fresh('image_url')) next.image_url = info.image_url
+      if (info.tags?.length) {
+        const existing = current.tags.split(/[,，]/).map(value => value.trim()).filter(Boolean)
+        next.tags = [...new Set([...existing, ...info.tags])].join(', ')
+      }
+      return next
+    })
+  }
+  // 手機 App 收到分享（ImmersiveApp 的 read_url）：表單先開，作品頁在背景讀，讀到再補上標題、封面、標籤與分類；讀不到也不擋儲存
+  const reading = useRef(null)  // 背景讀作品頁的 Promise
+  const [readingPage, setReadingPage] = useState(false)
+  useEffect(() => {
+    if (!item.read_url || item.id) return
+    let live = true
+    if (!reading.current) reading.current = readSharedPage(item.read_url, item.source_url || item.read_url, item.title || '')
+    setReadingPage(true)
+    setLookup(current => ({ ...current, message: '讀取作品頁中…可以先編輯或儲存，讀到後會補上標題、封面與標籤', blocked: false }))
+    reading.current.then(info => {
+      if (!live) return
+      setReadingPage(false)
+      if (info?.title) applyInfo(info, opened.current)
+      else setLookup(current => ({ ...current, message: '沒讀到作品頁（網站慢或卡在防護驗證），可以直接儲存，或按「抓取資訊」再試一次' }))
+    })
+    return () => { live = false }
+  }, [])
+  // 公開版收到分享時只預填，不自動讀（ImmersiveApp 的 read_pending）：按「讀取作品頁」才在看不到的瀏覽器打開這個網址
+  const [readPending, setReadPending] = useState(() => Boolean(item.read_pending) && !item.id && canReadPages())
+  const readShared = async () => {
+    const target = url.trim()
+    if (!target) return
+    setBusy(true); setReadPending(false)
+    setLookup(current => ({ ...current, message: '讀取作品頁中…', blocked: false }))
+    try {
+      const html = await readPage(target)
+      const info = html ? await api('/metadata', { method: 'POST', body: JSON.stringify({ url: target, html, title: form.title }) }) : null
+      if (info?.title) applyInfo(info)
+      else setLookup(current => ({ ...current, message: '手機的瀏覽器沒讀到（可能卡在網站的防護驗證），可以打開作品頁再分享一次，或按「抓取資訊」' }))
+    } catch (error) { setLookup(current => ({ ...current, message: error.message })) } finally { setBusy(false) }
+  }
+  const submit = async event => {
     event.preventDefault()
+    const pending = readingPage && !item.id ? reading.current : null
     // 讀作品頁得到的分類（作者、角色…）一起送出，存檔時標到還是一般標籤的那些上
-    onSave({ ...form, rating: Number(form.rating), tags: form.tags.split(/[,，]/).map(value => value.trim()).filter(Boolean), tag_categories: { ...(form.tag_categories || {}), ...(lookup?.categories || {}) } })
+    const saved = await onSave({ ...form, rating: Number(form.rating), tags: form.tags.split(/[,，]/).map(value => value.trim()).filter(Boolean), tag_categories: { ...(form.tag_categories || {}), ...(lookup?.categories || {}) } })
+    // 作品頁還沒讀完就儲存：讀到後在背景補上剛存好那件的空白欄位
+    if (pending && saved?.id) onFillBlanks?.(saved.id, pending.then(info => info?.title ? { title: info.title, image_url: info.image_url || '', tags: info.tags || [], tag_categories: info.categories || {} } : null), false)
   }
   const duplicate = lookup?.duplicate && lookup.duplicate.id !== item.id ? lookup.duplicate : null
   const formTags = form.tags.split(/[,，]/).map(value => value.trim()).filter(Boolean)
   // 帶入的新標籤可能就是現有標籤（英文、簡體、寫法不同）：只提示，按一下才換；規則要到「整理 → 標籤規則」建立
   const tagHints = (lookup?.tag_suggestions || []).filter(entry => formTags.includes(entry.source))
   const takeHint = entry => set('tags', [...new Set(formTags.map(name => name === entry.source ? entry.target : name))].join(', '))
-  const canFill = duplicate && !item.id && (form.title.trim() || form.image_url.trim() || formTags.length)
-  // 分享或書籤帶來的作品已在典藏中（例如一次收錄、只有編號的作品）：把這次的標題、封面補進那一件的空白欄位、標籤取聯集，不覆蓋已整理過的內容，再開啟它
-  const fillDuplicate = async () => {
-    setBusy(true)
-    try {
-      const target = await api(`/resources/${duplicate.id}`)
-      const tags = [...new Set([...(target.tags || []), ...formTags])]
-      const next = { ...target, tags }
-      if (!target.title.trim() && form.title.trim()) next.title = form.title.trim()
-      if (!target.image_url.trim() && form.image_url.trim()) next.image_url = form.image_url.trim()
-      if (next.title !== target.title || next.image_url !== target.image_url || tags.length > (target.tags || []).length) {
-        await api(`/resources/${duplicate.id}`, { method: 'PATCH', body: JSON.stringify(next) })
-      }
-      onOpenDuplicate(duplicate.id)
-    } catch (error) { setLookup(current => ({ ...current, message: error.message })) } finally { setBusy(false) }
+  const canFill = duplicate && !item.id && onFillBlanks && (form.title.trim() || form.image_url.trim() || formTags.length || readingPage)
+  // 分享或書籤帶來的作品已在典藏中（例如一次收錄、只有編號的作品）：先開啟它，這次的標題、封面、標籤在背景補進那一件的空白欄位
+  // （作品頁還在讀就等讀完；伺服器只補空白的、標籤取聯集，不覆蓋已整理過的內容，見 /resources/{id}/fill-blanks），補完會提示
+  const fillDuplicate = () => {
+    const values = { title: form.title.trim(), image_url: form.image_url.trim(), tags: formTags, tag_categories: { ...(form.tag_categories || {}), ...(lookup?.categories || {}) } }
+    const base = { title: opened.current.title.trim(), image_url: opened.current.image_url.trim() }
+    const hasValues = values.title || values.image_url || values.tags.length
+    onFillBlanks(duplicate.id, readingPage ? reading.current.then(info => info?.title || hasValues ? mergeRead(values, base, info) : null) : Promise.resolve(values))
   }
   return <form className="showcase-form" onSubmit={submit}>
     <p className="overline">{item.id ? '編輯典藏' : '收錄新典藏'}</p>
     <div className="fetch-box">
       <label>作品網址<div className="fetch-row"><input name="source-url" inputMode="url" autoCapitalize="none" autoCorrect="off" spellCheck={false} autoComplete="off" enterKeyHint="go" autoFocus={!item.id && !TOUCH} value={url} onChange={event => setUrl(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); fetchInfo() } }} placeholder="貼上作品頁網址，或直接輸入 N 網的作品編號（例如 123456）" /><button type="button" className="primary" onClick={fetchInfo} disabled={busy || !url.trim()}>{busy ? '讀取中…' : item.id ? '補齊資訊' : '抓取資訊'}</button></div></label>
+      {readPending && <p className="fetch-note">分享帶來的網址還沒讀取。按下後才會在看不到的瀏覽器打開它，補上標題、封面與標籤。<button type="button" onClick={readShared} disabled={busy || !url.trim()}>讀取作品頁</button></p>}
       {duplicate && <p className="fetch-note is-warn">這件已在典藏中：「{duplicate.title}」<button type="button" onClick={() => onOpenDuplicate(duplicate.id)}>開啟它</button>{canFill && <button type="button" onClick={fillDuplicate} disabled={busy}>補上它的空白欄位</button>}</p>}
       {!duplicate && lookup?.similar?.map(entry => <p key={entry.id} className="fetch-note is-warn">可能是同一本的另一個版本：「{entry.title}」（{entry.source_name}）<button type="button" onClick={() => onOpenDuplicate(entry.id)}>開啟它</button></p>)}
       {!item.id && onBulk && <p className="fetch-note"><button type="button" onClick={onBulk}>一次貼多個網址</button>收錄後在背景慢慢補資料</p>}
@@ -517,13 +572,15 @@ function EditForm({ item, link, dirtyRef, onCancel, onSave, onRemove, onPreview,
 }
 
 // 背景：封面縮圖縮小後模糊再放大（比整張大圖直接模糊省很多運算），新舊兩層交叉淡化，切換時不閃黑。
+// 同一件作品換了封面（補上空白欄位後）也換背景
 function Backdrop({ item, onClose }) {
-  const [layers, setLayers] = useState(() => [{ key: item.id, src: item.image_url ? coverSrc(item, 240) : '' }])
+  const layerKey = `${item.id}:${item.image_url || ''}`
+  const [layers, setLayers] = useState(() => [{ key: layerKey, src: item.image_url ? coverSrc(item, 240) : '' }])
   const [ready, setReady] = useState(false)
   useEffect(() => { const timer = setTimeout(() => setReady(true), 600); return () => clearTimeout(timer) }, [])
   useEffect(() => {
-    setLayers(current => current[current.length - 1]?.key === item.id ? current : [...current.slice(-1), { key: item.id, src: item.image_url ? coverSrc(item, 240) : '' }])
-  }, [item.id])
+    setLayers(current => current[current.length - 1]?.key === layerKey ? current : [...current.slice(-1), { key: layerKey, src: item.image_url ? coverSrc(item, 240) : '' }])
+  }, [layerKey])
   return <div className="showcase-backdrop" onClick={onClose} aria-hidden="true">
     {ready && layers.map(layer => layer.src && <img key={layer.key} src={layer.src} alt="" onError={hideBroken} />)}
   </div>

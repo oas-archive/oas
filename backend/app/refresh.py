@@ -27,7 +27,8 @@ state = {"running": False, "total": 0, "done": 0, "updated": 0, "failed": 0, "ad
 def page_url(resource: Resource, template: str) -> str:
     if resource.code.lower().startswith(("http://", "https://")):
         return resource.code
-    return template.replace("{}", resource.code) if "{}" in template and template != "{}" else ""
+    url = template.replace("{}", resource.code) if "{}" in template and template != "{}" else ""
+    return url if url.lower().startswith(("http://", "https://")) else ""  # 只讀 http(s)：舊資料裡的怪範本不拿來連線
 
 
 def targets(db, mode: str) -> list[tuple[int, str]]:

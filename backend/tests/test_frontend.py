@@ -10,7 +10,7 @@ def make_site(tmp_path):
     (tmp_path / "assets" / "index-abc.js").write_text("console.log(1)", encoding="utf-8")
     (tmp_path / "favicon.png").write_bytes(b"png")
     (tmp_path.parent / "secret.txt").write_text("不能被讀到", encoding="utf-8")
-    app = FastAPI()
+    app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)  # 與 main.py 相同
 
     @app.get("/api/health")
     def health():
@@ -30,6 +30,8 @@ def test_serves_built_frontend_with_spa_fallback(tmp_path):
     assert site.get("/favicon.png").content == b"png"
     assert site.get("/api/health").json() == {"status": "ok"}  # API 不受影響
     assert site.get("/api/not-there").status_code == 404  # 打錯的 API 不會回網頁
+    for closed in ("/docs", "/redoc", "/openapi.json"):  # API 文件已關閉，也不退回首頁
+        assert site.get(closed).status_code == 404, closed
     assert "不能被讀到" not in site.get("/..%2Fsecret.txt").text
 
 

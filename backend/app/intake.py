@@ -6,9 +6,10 @@
 - 有防護、伺服器讀不到的網站（禁漫、MissAV）不排入，請用「收錄到 OAS」書籤。
 """
 from sqlalchemy import select
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import lazyload, selectinload
 
 from . import covers, metadata, refresh, scheduler
+from .batching import chunks
 from .database import Resource, SessionLocal, Source
 
 state = {"running": False, "total": 0, "done": 0, "filled": 0, "failed": 0, "skipped": 0, "message": "", "started_at": None, "finished_at": None}
@@ -44,13 +45,15 @@ def normalise_saved() -> dict:
         templates = dict(db.execute(select(Source.name, Source.template)).all())
         kinds = dict(db.execute(select(Source.name, Source.kind)).all())
         table = Resource.__table__
-        for row in db.scalars(select(Resource)).all():
+        # 啟動時在服務就緒前同步執行：只讀需要的欄位，不載入每件的標籤與書單（作品多時這兩次載入最花時間）
+        for row in db.execute(select(table.c.id, table.c.title, table.c.updated_at)).all():
             title = metadata.clean_title(row.title) if row.title else ""
             if title and title != row.title:
                 db.execute(table.update().where(table.c.id == row.id).values(title=title, updated_at=row.updated_at))
                 counts["titles"] += 1
         db.commit()  # 先存好標題，合併時才會用到清理後的標題
-        rows = db.scalars(select(Resource).order_by(Resource.id)).all()
+        # 仍取作品物件（合併時會改到後面還沒輪到的作品），但標籤與書單等真的用到（合併）才讀
+        rows = db.scalars(select(Resource).options(lazyload(Resource.tags), lazyload(Resource.collections)).order_by(Resource.id)).all()
         index = {(row.source_name, row.code): row.id for row in rows}
         for row in rows:
             url = refresh.page_url(row, templates.get(row.source_name, ""))
@@ -99,7 +102,8 @@ def enqueue(ids: list[int]) -> int:
         return 0
     with SessionLocal() as db:
         templates = dict(db.execute(select(Source.name, Source.template)).all())
-        rows = db.scalars(select(Resource).options(selectinload(Resource.tags)).where(Resource.id.in_(ids))).all()
+        rows = [row for batch in chunks(sorted(set(ids)))  # 「整組重試」可能是全部作品，分批才不會超過參數上限
+                for row in db.scalars(select(Resource).options(selectinload(Resource.tags)).where(Resource.id.in_(batch)).order_by(Resource.id)).all()]
         for image in fill_known_covers(db, rows, templates):
             covers.schedule(image)
         db.commit()

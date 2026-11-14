@@ -181,14 +181,6 @@ def test_startup_step_failure_is_only_logged():
     main._safely(boom)
 
 
-@pytest.mark.parametrize("url,allowed", [
-    ("https://example.com/a.jpg", True), ("http://127.0.0.1:9999/a.jpg", False), ("http://localhost:9999/a.jpg", False),
-    ("http://192.168.1.1/a.jpg", False), ("javascript:alert(1)", False), ("http://[bad/a.jpg", False),
-])
-def test_cover_redirect_only_to_public_addresses(url, allowed):
-    assert covers.redirectable(url) is allowed
-
-
 def test_uncached_cover_never_redirects_to_this_device(client):
     item = add(client, "a", image_url="http://127.0.0.1:9999/a.jpg")
     assert client.get(f"/api/covers/{item['id']}", follow_redirects=False).status_code == 404

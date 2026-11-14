@@ -1,13 +1,17 @@
-name: 發布免安裝版
+name: 發布
 
-# 推送 v 開頭的標籤（例如 v0.15.8）時，打包 Windows 免安裝版並建立 Release。
-# Release 由 github-actions 機器人建立。
+# 推送 v 開頭的標籤（例如 v0.15.8）時：打包 Windows 免安裝版，建立「草稿」Release。
+# 草稿不公開任何檔案；這個流程只建立草稿、從不公開，維護者另外檢查後才發布。Release 由 github-actions 機器人建立。
 on:
   push:
     tags: ["v*"]
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 env:
   PYTHONUTF8: "1"  # Windows 主機預設的輸出編碼不支援中文
@@ -15,11 +19,17 @@ env:
 jobs:
   portable:
     runs-on: windows-latest
+    permissions:
+      contents: write  # 建立草稿 Release
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      # 和免安裝版內嵌的 Python（tools/build_portable.py 的 PYTHON_VERSION）同一個小版本，測試才是測實際出貨的直譯器。
+      # 打包本身不依賴主機版本：套件是 pip 依 --python-version 下載內嵌版用的 wheel。
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
-          python-version: "3.11"
+          python-version: "3.13"
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
@@ -30,11 +40,20 @@ jobs:
           python -m pytest -q
       - name: 打包免安裝版
         run: python tools/build_portable.py
-      - name: 建立 Release
+      - name: 建立草稿 Release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         shell: bash
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/*.zip \
+          notes="Windows 免安裝版：下載 zip，解壓縮後雙擊「開啟 OAS.cmd」。不需要安裝 Python 或 Node.js。第一次開啟時要確認已滿 18 歲，並選擇封面要不要存在這台電腦。"
+          # zip 附同名的 .sha256：使用者可以核對下載的檔案，維護者公開前也用它核對
+          zip="OAS-${GITHUB_REF_NAME}-windows-x64.zip"
+          test -f "dist/$zip" || { echo "::error::找不到 dist/$zip：版本號和標籤不同"; exit 1; }
+          (cd dist && sha256sum "$zip" > "$zip.sha256" && cat "$zip.sha256")
+          # 只有電腦版時是一般 Release（公開後成為 Latest）
+          prerelease=""
+          gh release create "$GITHUB_REF_NAME" "dist/$zip" "dist/$zip.sha256" --draft $prerelease --verify-tag \
             --title "OAS $GITHUB_REF_NAME" \
-            --notes "Windows 免安裝版：下載 zip，解壓縮後雙擊「開啟 OAS.cmd」。不需要安裝 Python 或 Node.js。"
+            --notes "$notes"
+

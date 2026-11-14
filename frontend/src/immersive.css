@@ -1272,6 +1272,10 @@ kbd{display:inline-grid;place-items:center;min-width:18px;height:18px;padding:0 
 .pref-row small,.pref-heading small{color:#8a94b4;font-size:calc(11px*var(--fz));line-height:1.6}
 .pref-heading{display:grid;gap:3px;margin:14px 0 8px}
 .pref-heading b{font-weight:500;color:#eef1ff}
+/* 電腦公開版設定：改成不存封面時，在開關下方問已存的封面要不要刪 */
+.pref-followup{display:grid;gap:10px;margin:4px 0 14px 28px}
+.pref-followup .first-run-question legend{margin-bottom:8px;color:#eef1ff;font-size:calc(13px*var(--fz))}
+.pref-followup .cover-actions{margin:0}
 .private-backups{display:grid;gap:8px;margin:0;padding:0;list-style:none}
 .private-backups li{display:flex;gap:10px;align-items:center;justify-content:space-between}
 .private-backups span{display:grid;gap:2px}
@@ -1328,3 +1332,26 @@ kbd{display:inline-grid;place-items:center;min-width:18px;height:18px;padding:0 
 .notices-text p:last-child{margin-bottom:0}
 .notices-empty{margin:18px 0 0;color:#aab4d0;font-size:calc(13px*var(--fz))}
 .notices-modal{z-index:15}
+/* 常駐背景進度（Sidebar.jsx 的 ProgressStrip）：電腦在側欄底部、迷你側欄是一個按鈕、手機在底部分頁列上方（分頁列高 61px）。做完顯示 4 秒才消失 */
+.oas-nav .progress-strip{display:grid;gap:6px;width:100%;margin-bottom:4px;padding:9px 10px;border-radius:9px;color:#c4cce2;font-size:calc(12px*var(--fz));line-height:1.45}
+.progress-strip{border:0;background:transparent;text-align:left;cursor:pointer;font-variant-numeric:tabular-nums}
+.progress-text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.progress-note{color:#8a94b4;font-size:calc(11px*var(--fz));line-height:1.45}
+.progress-meter{display:block;height:3px;overflow:hidden;border-radius:99px;background:rgba(255,255,255,.08)}
+.progress-meter span{display:block;height:100%;background:var(--ambient);transform-origin:left;transition:transform .4s cubic-bezier(.2,.8,.2,1)}
+.progress-strip.is-finished .progress-text::before{content:"";display:inline-block;width:6px;height:6px;margin-right:6px;border-radius:50%;vertical-align:1px;background:#8fcf8a}
+.oas-nav .nav-rail .nav-progress-mini{font-variant-numeric:tabular-nums}
+.nav-progress-mini .progress-meter{width:34px}
+.progress-strip.is-phone{position:fixed;z-index:13;left:0;right:0;bottom:calc(61px + env(safe-area-inset-bottom));display:flex;align-items:center;gap:12px;height:32px;padding:0 16px;border-top:1px solid rgba(255,255,255,.06);background:#080b12f7;color:#c4cce2;font-size:calc(12px*var(--fz))}
+.progress-strip.is-phone .progress-text{flex:1}
+.progress-strip.is-phone .progress-meter{flex:0 0 64px}
+.progress-strip.is-phone:active{background:#121827}
+.nav-phone.has-progress .oas-main{padding-bottom:calc(116px + env(safe-area-inset-bottom))}
+.nav-phone.has-progress .back-to-top{bottom:calc(108px + env(safe-area-inset-bottom))}
+.nav-phone.has-progress .back-to-top.is-raised{bottom:calc(301px + env(safe-area-inset-bottom))}
+.nav-phone.has-progress .oas-toast,.nav-phone.has-progress .return-prompt,.nav-phone.has-progress .batch-bar{bottom:calc(108px + env(safe-area-inset-bottom))}
+/* 待整理上方：還在排隊、等手機讀取、補失敗的件數 */
+.attention-states{display:flex;flex-wrap:wrap;gap:8px;margin:-6px 0 18px;font-size:calc(12px*var(--fz));font-variant-numeric:tabular-nums}
+.attention-states span{padding:4px 10px;border:1px solid rgba(255,255,255,.10);border-radius:99px;color:#c4cce2}
+.attention-states .is-failed{color:#e9b872}
+.attention-waiting{color:#8a94b4}

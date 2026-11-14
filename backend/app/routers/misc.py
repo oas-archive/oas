@@ -29,6 +29,7 @@ def health(nonce: str = Query(default="", max_length=128)):
 
 @router.get("/preferences")
 def read_preferences(db: Session = Depends(db_session)):
+    """edition、platform（desktop／android）、questions（這台要問的題目，非公開版是空的）、setup_done 與各題的選擇。"""
     return preferences.read(db)
 
 

@@ -4,10 +4,11 @@ import CommandPalette from './CommandPalette.jsx'
 import { cancelPreview, HoverPreview, OfflineBanner, schedulePreview, SEARCH_TIPS, SearchBox, SkeletonGrid } from './Extras.jsx'
 import ImportDialog from './ImportDialog.jsx'
 import InsightsView, { INSIGHT_TABS, migrateKeptPairs, shownTab, tabPage } from './InsightsView.jsx'
-import { canReadPages, readPage } from './pageReader.js'
+import { canReadPages, resumeReads } from './pageReader.js'
+import { useProgressLine } from './progress.js'
 import { isPublic } from './preferences.js'
 import Showcase, { playShowcaseClose } from './Showcase.jsx'
-import Sidebar, { BottomTabs, PAGES, useTidyCounts } from './Sidebar.jsx'
+import Sidebar, { BottomTabs, PAGES, ProgressStrip, useTidyCounts } from './Sidebar.jsx'
 import StatsView from './StatsView.jsx'
 import FilterSheet, { ListTypeDialog, SmartDialog } from './FilterSheet.jsx'
 import {
@@ -69,6 +70,10 @@ export default function ImmersiveApp() {
   const [message, setMessageState] = useState(null)
   const setMessage = useCallback((text, undoId = null) => setMessageState(text ? (text.error ? { text: text.text, error: true } : { text, undo: undoId }) : null), [])
   const [dataVersion, setDataVersion] = useState(0)  // 復原後讓關聯頁、資料頁重新載入
+  // 作品有新增、修改、刪除時加一：首頁在背景重抓（畫面照舊），最近收錄、繼續閱讀、待評分才會跟上。
+  // 不用 dataVersion：它是其他頁的 key，每次小修改都換會讓那些頁整頁重建
+  const [homeVersion, setHomeVersion] = useState(0)
+  const homeChanged = useCallback(() => setHomeVersion(value => value + 1), [])
   const [unratedOnly, setUnratedOnly] = useState(() => urlState.get('rated') === '0')
   const [returning, setReturning] = useState(null)  // 從外部網站回來時詢問的作品
   const pendingVisit = useRef(null)
@@ -134,6 +139,7 @@ export default function ImmersiveApp() {
   // reset：只是換篩選，資料沒變，不重算首頁數字和側欄（重複作品、待整理、標籤建議）；其他時候是資料可能變了
   const load = async (reset = false) => {
     const seq = ++loadSeq.current
+    if (!reset) homeChanged()  // 儲存、補資料、一次收錄、背景補完、復原、刪除…都走這裡
     setLoadingList(true)
     try {
       // 重新載入時保留已展開的數量，避免儲存後畫面跳回第一頁
@@ -145,6 +151,10 @@ export default function ImmersiveApp() {
       if (!reset) bumpSidebar()
     } catch (error) { if (seq === loadSeq.current) setMessage(errorNote(error)) } finally { if (seq === loadSeq.current) setLoadingList(false) }
   }
+  // 背景補資料、手機讀頁的進度（側欄底部、手機底部分頁列上方）；做完一種就重新載入，補到的標題與封面才看得到
+  const progressLine = useProgressLine(() => load())
+  // 上次還沒讀完的禁漫、MissAV（App 重新載入或被系統關掉）接著讀；背景讀取關閉時不讀
+  useEffect(() => { resumeReads() }, [])
   const loadMore = async () => {
     const seq = loadSeq.current
     setLoadingMore(true)
@@ -159,6 +169,7 @@ export default function ImmersiveApp() {
   useEffect(() => { api('/sources').then(setSourceList).catch(() => {}) }, [])
   // 「收錄到 OAS」書籤或手機分享帶來的資料（?add=JSON），並清掉網址參數：
   // 開啟預先填好的收錄表單。已在典藏中的，表單會提示並提供「開啟它」「補上它的空白欄位」：網址可能是別的網站組出來的，不能不問就改既有作品。
+  // 手機 App 要讀作品頁時不等讀完：表單先開（read_url），由表單在背景讀，讀到再補上標題、封面、標籤與分類（慢的網站要等 30 秒）。
   // 分享會整頁重新載入，所以先回到分享前所在的頁面（例如「待整理」），關掉作品頁時才不會回到首頁。
   useEffect(() => {
     const raw = new URLSearchParams(window.location.search).get('add')
@@ -173,24 +184,19 @@ export default function ImmersiveApp() {
       setPage(back.page)
     }
     const draft = { ...EMPTY, title: String(data.title || ''), image_url: String(data.image_url || ''), tags: Array.isArray(data.tags) ? data.tags.map(String) : [], source_url: String(data.url || '') }
+    // 公開版不自動讀：同一支手機的任何 App 都能送分享進來，要使用者在表單按「讀取作品頁」才打開那個網址。個人版維持分享後自動讀
+    const readLater = isPublic()
+    // 手機 App：在看不到的瀏覽器打開作品頁，交給伺服器照網站規則解析（禁漫、MissAV 等伺服器讀不到的網站也讀得到標籤）
+    const readNow = !readLater && canReadPages()
+    // 這裡的 /metadata 不連外（fetch: false），只算來源、編號、是否已收錄與依網址推得的封面，很快
     api('/metadata', { method: 'POST', body: JSON.stringify({ url: draft.source_url, fetch: false, title: draft.title }) })
-      .then(async info => {
-        // 手機 App：在看不到的瀏覽器打開作品頁，交給伺服器照網站規則解析（禁漫、MissAV 等伺服器讀不到的網站也讀得到標籤）
-        if (canReadPages()) {
-          setMessage('讀取作品頁中…')
-          const html = await readPage(info.url || draft.source_url)
-          const read = html ? await api('/metadata', { method: 'POST', body: JSON.stringify({ url: draft.source_url, html, title: draft.title }) }).catch(() => null) : null
-          if (read?.title) {
-            info = read
-            Object.assign(draft, { title: read.title, image_url: draft.image_url || read.image_url || '', tags: [...new Set([...draft.tags, ...read.tags])], tag_categories: read.categories || {}, similar: read.similar || [] })
-          }
-          setMessage('')
-        }
-        // 標題去掉網站名稱；手機分享沒有封面時，用依網址推得的封面（例如禁漫、MissAV）
-        const filled = { ...draft, title: info.title || draft.title, image_url: draft.image_url || info.image_url || '' }
-        return open({ ...filled, source_name: info.source_name, code: info.code, duplicate: info.duplicate || null })
+      .then(info => {
+        // 標題去掉網站名稱；手機分享沒有封面時，用依網址推得的封面（例如禁漫、MissAV），讀到作品頁的封面再換掉。
+        // 公開版先不放封面：表單一顯示預覽，服務就會去抓那張圖。按「讀取作品頁」或「抓取資訊」後才帶入
+        const filled = { ...draft, title: info.title || draft.title, image_url: readLater ? '' : draft.image_url || info.image_url || '' }
+        open({ ...filled, source_name: info.source_name, code: info.code, duplicate: info.duplicate || null, read_pending: readLater, read_url: readNow ? info.url || draft.source_url : '' })
       })
-      .catch(() => open({ ...draft, code: draft.source_url }))
+      .catch(() => open({ ...draft, image_url: readLater ? '' : draft.image_url, code: draft.source_url, read_pending: readLater, read_url: readNow ? draft.source_url : '' }))
   }, [])
   // 記住目前在哪一頁，給上面的分享回到原頁面用
   useEffect(() => { try { sessionStorage.setItem('oas-last-view', JSON.stringify({ page, view: insightTab })) } catch { /* 只影響分享後回到哪一頁 */ } }, [page, insightTab])
@@ -208,6 +214,7 @@ export default function ImmersiveApp() {
       apply({ rating: saved.rating, status: saved.status, link_dead: saved.link_dead, progress: saved.progress, finished_at: saved.finished_at })
       setReturning(current => current?.id === item.id ? { ...current, ...saved } : current)
       api('/dashboard').then(setDashboard).catch(() => {})
+      homeChanged()  // 改狀態、評分會讓作品進出「繼續閱讀」「待評分」
       return saved
     } catch (error) {
       const before = { rating: item.rating, status: item.status, progress: item.progress, link_dead: item.link_dead }
@@ -350,6 +357,23 @@ export default function ImmersiveApp() {
   }, [open])
   const openInGallery = useCallback(item => open(item, itemsRef.current), [open])
   const openDuplicate = id => api(`/resources/${id}`).then(item => { closing.current?.(); setDirection(0); setSelected(item); setContext(null) }).catch(error => setMessage(errorNote(error)))
+  // 補上已在典藏的那件的空白欄位（分享時的「補上它的空白欄位」、讀完作品頁前就儲存的新作品）：畫面先跳過去，
+  // 這裡在背景等作品頁讀完（values 是 Promise，讀不到時為 null）再送出，補完更新畫面與清單並提示。只補空白的，不覆蓋已整理過的內容。
+  // 開啟那件（openFirst）也由這裡做：等開啟的讀取回來才套用補好的資料，較慢的開啟回應才不會把補好的封面蓋回舊的
+  const fillBlanks = async (id, values, openFirst = true) => {
+    const opened = openFirst ? openDuplicate(id) : null
+    try {
+      const data = await values
+      if (!data) { setMessage('沒讀到作品頁（網站慢或卡在防護驗證），可以之後在作品頁按「編輯 → 補齊資訊」'); return }
+      const { filled, ...saved } = await api(`/resources/${id}/fill-blanks`, { method: 'POST', body: JSON.stringify(data) })
+      if (filled.categorised) await loadTagCategories(true)
+      await opened
+      setSelected(current => current?.id === id ? { ...current, ...saved } : current)
+      announceItem(id, saved); load()
+      const parts = [filled.title && '標題', filled.cover && '封面', filled.tags && `${filled.tags} 個標籤`].filter(Boolean)
+      setMessage(parts.length ? `已補上「${shortTitle(saved)}」的${parts.join('、')}` : `「${shortTitle(saved)}」沒有空白欄位要補`)
+    } catch (error) { setMessage(errorNote(error)) }
+  }
   // 換頁：記一筆瀏覽紀錄，滑鼠返回鍵或 Alt + ← 可以回到上一頁
   const pushPage = (target, name = '') => {
     if (target === page && (target !== 'creator' || name === creator)) {
@@ -367,6 +391,7 @@ export default function ImmersiveApp() {
   const openTag = async tag => { const categories = await loadTagCategories(); PROFILE_CATEGORIES.includes(categories[tag]) ? openProfile(tag) : filterTag(tag) }
   const toggleTag = tag => setSelectedTags(current => current.includes(tag) ? current.filter(value => value !== tag) : [...current, tag])
   const goTo = target => { pushPage(target); setPage(target); window.scrollTo({ top: 0 }) }
+  const openAttention = () => { setInsightTab('attention'); goTo('tidy') }
   // 復原：提示訊息的「復原」按鈕、Ctrl + Z、指令面板都走這裡
   const undoAction = async id => {
     try {
@@ -424,7 +449,7 @@ export default function ImmersiveApp() {
       const saved = selected?.id ? await api(`/resources/${selected.id}`, { method: 'PATCH', body: JSON.stringify(payload) }) : await api('/resources', { method: 'POST', body: JSON.stringify(payload) })
       if (Object.keys(payload.tag_categories || {}).length) await loadTagCategories(true)  // 讀作品頁帶來的分類，存完才看得到
       setMessage('典藏已儲存'); setAmbientColour(colourFor(saved), true); setSelected(saved); announceItem(saved.id, saved); load()
-      return true
+      return saved
     } catch (error) { setMessage(errorNote(error)); return false }
   }
   const loadCollections = () => api('/collections').then(list => {
@@ -555,7 +580,7 @@ export default function ImmersiveApp() {
   const visit = async item => {
     if (!item?.id) return
     pendingVisit.current = { id: item.id, at: Date.now() }
-    try { await api(`/resources/${item.id}/open`, { method: 'POST' }) } catch { /* 閱讀事件失敗不影響開啟連結 */ }
+    try { await api(`/resources/${item.id}/open`, { method: 'POST' }); homeChanged() } catch { /* 閱讀事件失敗不影響開啟連結 */ }
     bumpSidebar()  // 開連結不改狀態（可能只是確認還有效），看完回來由提示卡決定
   }
   // 批次編輯：點卡片改為勾選；Shift + 點擊可一次選取一段範圍。
@@ -628,9 +653,9 @@ export default function ImmersiveApp() {
     return index < 0 ? {} : { prev: context[index - 1], next: context[index + 1] }
   }, [selected, context])
 
-  return <div className={`oas-shell nav-${navVariant}`}><div className="oas-ambient" aria-hidden="true"><i className="is-on" /><i /></div><div className="oas-grain" aria-hidden="true" />
+  return <div className={`oas-shell nav-${navVariant}${navVariant === 'phone' && progressLine.shown ? ' has-progress' : ''}`}><div className="oas-ambient" aria-hidden="true"><i className="is-on" /><i /></div><div className="oas-grain" aria-hidden="true" />
     {navVariant !== 'phone' && <Sidebar variant={navVariant} onToggle={toggleNav} onShowList={showList} tidyCounts={tidyCounts}
-      page={page} goTo={goTo} openById={openById} onPalette={() => setPaletteOpen(true)} onBackup={() => setPanel('backup')} onDuplicates={() => { setInsightTab('duplicates'); goTo('tidy') }} onAttention={() => { setInsightTab('attention'); goTo('tidy') }} onTagSuggest={() => { setInsightTab('rules'); goTo('tidy') }} refreshKey={sidebarKey}
+      page={page} goTo={goTo} openById={openById} onPalette={() => setPaletteOpen(true)} onBackup={() => setPanel('backup')} onDuplicates={() => { setInsightTab('duplicates'); goTo('tidy') }} onAttention={openAttention} progressLine={progressLine} onTagSuggest={() => { setInsightTab('rules'); goTo('tidy') }} refreshKey={sidebarKey}
       collections={collections} activeCollection={activeCollection || activeSmart} onCollection={openCollection} onShortcuts={() => setPanel('keys')}
       onCreateCollection={createCollection} onNewSmart={newSmart} onRenameCollection={renameCollection} onDeleteCollection={deleteCollection} />}
     <button type="button" className="skip-link" onClick={() => document.getElementById('oas-main')?.focus()}>跳到主要內容</button>
@@ -645,7 +670,7 @@ export default function ImmersiveApp() {
       {page === 'creator' ? <CreatorView key={`${creator}-${dataVersion}`} name={creator} onOpen={open} onHover={hoverAmbient} onQuick={quick} onProfile={openProfile} onFilterTags={filterTags} onPickUnread={randomUnread} notify={setMessage} density={density} />
         : page === 'taste' || page === 'tidy' ? <InsightsView key={dataVersion} page={page} tab={tab} setTab={setInsightTab} onOpenItem={item => open(item)} onFilterTags={tags => filterTags(tags, 'any')} onPickUnread={randomUnread} onChanged={() => load()} notify={setMessage} counts={tidyCounts} onBackup={() => setPanel('backup')} />
         : page === 'stats' ? <StatsView key={dataVersion} onTag={openTag} onStatus={status => filterTags([], 'all', status)} notify={setMessage} />
-        : page === 'home' ? <HomeView onOpen={open} onHover={hoverAmbient} onQuick={quick} onTag={openTag} onShowList={showList} onCollection={openCollection} collections={collections} linkOf={item => linkFor(item, sourceList)} onVisit={visit} notify={setMessage} version={dataVersion} personal={navVariant === 'phone'} /> : <>
+        : page === 'home' ? <HomeView onOpen={open} onHover={hoverAmbient} onQuick={quick} onTag={openTag} onShowList={showList} onCollection={openCollection} collections={collections} linkOf={item => linkFor(item, sourceList)} onVisit={visit} notify={setMessage} version={dataVersion} changes={homeVersion} personal={navVariant === 'phone'} /> : <>
         <h1 className="sr-only">書庫</h1>
         <section className="filter-row"><nav className="status-rail" aria-label="閱讀狀態" style={{ '--n': statusTabs.length, '--i': Math.max(0, statusTabs.indexOf(state)) }}><i aria-hidden="true" />{statusTabs.map(value => <button key={value || 'all'} type="button" aria-pressed={state === value} className={state === value ? 'is-active' : ''} onClick={() => setState(value)}><span>{value || '全部'}</span><b>{(value ? dashboard?.status_counts?.[value] : dashboard?.total) || ''}</b></button>)}</nav></section>
         {navVariant === 'phone' && <section className="list-chips" aria-label="書單">
@@ -685,7 +710,7 @@ export default function ImmersiveApp() {
     {message && <div className={`oas-toast${message.undo ? ' has-undo' : ''}${message.error ? ' is-error' : ''}`} role={message.error ? 'alert' : 'status'}><span>{message.text}</span>
       {message.undo && <button type="button" className="toast-undo" onClick={() => { const id = message.undo; setMessage(''); undoAction(id) }}>復原<kbd>Ctrl Z</kbd></button>}
       <button type="button" className="toast-close" onClick={() => setMessage('')} aria-label="關閉提示">×</button></div>}
-    {selected && <Showcase key={selected.id ? 'item' : 'new'} item={selected} direction={direction} link={linkFor(selected, sourceList)} prev={prevNext.prev} next={prevNext.next} onNavigate={navigate} onClose={closeShowcase} onQuick={quick} onSave={save} onRemove={remove} onTag={openTag} onVisit={visit} onBulk={async () => { if (formDirty.current && !await confirmLeave()) return; formDirty.current = false; closeShowcase(); setPanel('import') }} dirtyRef={formDirty} onOpenDuplicate={openDuplicate} flipFrom={flipFrom} coverHint={coverHint} collections={collections.filter(collection => !collection.query)} onMembership={changeMembership} onCreateCollection={createCollection} onRelinked={saved => { setSelected(saved); load(); setMessage(saved.added_tags ? `已改用 ${saved.source_name}，補上 ${saved.added_tags} 個標籤` : `已改用 ${saved.source_name}`) }} />}
+    {selected && <Showcase key={selected.id ? 'item' : 'new'} item={selected} direction={direction} link={linkFor(selected, sourceList)} prev={prevNext.prev} next={prevNext.next} onNavigate={navigate} onClose={closeShowcase} onQuick={quick} onSave={save} onRemove={remove} onTag={openTag} onVisit={visit} onBulk={async () => { if (formDirty.current && !await confirmLeave()) return; formDirty.current = false; closeShowcase(); setPanel('import') }} dirtyRef={formDirty} onOpenDuplicate={openDuplicate} onFillBlanks={fillBlanks} flipFrom={flipFrom} coverHint={coverHint} collections={collections.filter(collection => !collection.query)} onMembership={changeMembership} onCreateCollection={createCollection} onRelinked={saved => { setSelected(saved); load(); setMessage(saved.added_tags ? `已改用 ${saved.source_name}，補上 ${saved.added_tags} 個標籤` : `已改用 ${saved.source_name}`) }} />}
     {warmItem && !selected && <div className="showcase-warm" aria-hidden="true" inert=""><Showcase warm key="warm" item={warmItem} onClose={() => {}} onQuick={() => Promise.resolve()} /></div>}
     <AskHost />
     {panel === 'backup' && <BackupCenter close={() => setPanel(null)} notify={setMessage} reload={() => { load(); loadCollections(); loadTagCategories(true); setDataVersion(value => value + 1); api('/sources').then(setSourceList).catch(() => {}) }} />}
@@ -695,6 +720,7 @@ export default function ImmersiveApp() {
     <HoverPreview disabled={Boolean(selected || batch || paletteOpen || panel)} />
     <OfflineBanner onBack={() => { load(); loadCollections(); bumpSidebar() }} />
     {!selected && <BackToTop raised={Boolean(batch && page === 'gallery')} />}
+    {navVariant === 'phone' && <ProgressStrip line={progressLine} variant="phone" onOpen={openAttention} />}
     {navVariant === 'phone' && <BottomTabs page={page} goTo={goTo} tidyCounts={tidyCounts} />}
     {returning && <ReturnPrompt key={returning.id} item={returning} onQuick={(item, patch) => quick(item, patch).then(saved => { bumpSidebar(); return saved })} onOpen={() => { const item = returning; setReturning(null); if (selected?.id !== item.id) open(item) }} onClose={() => setReturning(null)} />}
     {filterOpen && <FilterSheet included={selectedTags} excluded={excludedTags} mode={tagMode} kind={kind} source={source} sources={sources} total={total} loading={loadingList} filterParams={filterParams} drafting={smartDraft} canSave={hasFilters}
@@ -738,15 +764,16 @@ function BackupCenter({ close, notify, reload }) {
   const dialog = useFocusTrap()
   const [mode, setMode] = useState('merge')
   const [busy, setBusy] = useState(false)
-  // 公開版：備份放在 App 私有空間，匯出才存到使用者選的資料夾，選過就記住
+  // 手機 App（個人版、公開版）：備份放在 App 私有空間，匯出才存到使用者選的資料夾，選過就記住；電腦版沒有 OASNative，照舊直接下載
+  const appBackups = Boolean(window.OASNative?.privateBackups?.())
   const [privateFiles, setPrivateFiles] = useState([])
   const [folder, setFolder] = useState(() => window.OASNative?.backupFolderName?.() || '')
   useEffect(() => {
-    if (!isPublic()) return
+    if (!appBackups) return undefined
     api('/backup/files').then(setPrivateFiles).catch(() => {})
     window.__oasFolderChanged = () => setFolder(window.OASNative?.backupFolderName?.() || '')
     return () => { delete window.__oasFolderChanged }
-  }, [])
+  }, [appBackups])
   const restoreFromApp = async name => {
     if (mode === 'replace' && !await ask('「取代」會先清空目前所有典藏，再寫入備份內容。確定繼續？', { confirm: '清空並取代', danger: true })) return
     setBusy(true)
@@ -775,10 +802,11 @@ function BackupCenter({ close, notify, reload }) {
       <button className="drawer-close" onClick={close} aria-label="關閉備份中心">×</button>
       <h2>備份中心</h2>
       <p className="drawer-subtitle">完整備份包含典藏、標籤、評分、狀態、筆記、時間戳與來源規則，格式為可讀的 JSON。</p>
-      {isPublic()
-        ? <div className="backup-block"><h3>匯出</h3><p>備份平常存在 App 裡，解除安裝就會消失；要換手機或留底時，匯出到你選的資料夾。備份內容沒有加密，資料夾裡的檔案其他 App 可能讀得到。</p>
+      {appBackups
+        ? <div className="backup-block"><h3>匯出</h3><p>備份平常存在 App 裡，解除安裝就會消失；要換手機或留底時，匯出到你選的資料夾。</p>
           {folder && <p className="maint-note">匯出位置：{folder}</p>}
-          <div className="cover-actions"><a className="save" href="/api/backup" download>{folder ? '匯出完整備份' : '選資料夾並匯出'}</a>{folder && <button type="button" className="ghost" onClick={() => window.OASNative?.chooseBackupFolder?.()}>更換資料夾</button>}</div></div>
+          <div className="cover-actions"><a className="save" href="/api/backup" download>{folder ? '匯出完整備份' : '選資料夾並匯出'}</a>{folder && <button type="button" className="ghost" onClick={() => window.OASNative?.chooseBackupFolder?.()}>更換資料夾</button>}</div>
+          <p className="maint-note">匯出的檔案沒有加密。選「下載」這類公用資料夾時，有檔案權限的其他 App 讀得到。</p></div>
         : <div className="backup-block"><h3>匯出</h3><p>下載目前所有資料的快照。建議在大量編輯或還原前先匯出一次。</p><a className="save" href="/api/backup" download>下載完整備份</a></div>}
       <div className="backup-block"><h3>還原</h3><p>選擇先前匯出的 <code>oas-backup-*.json</code>。</p>
         <div className="mode-switch">{[['merge', '合併', '保留現有資料，只加入缺少的典藏'], ['replace', '取代', '清空後完整還原至備份狀態']].map(([value, label, hint]) => <label key={value} className={mode === value ? 'is-active' : ''}><input type="radio" name="restore-mode" value={value} checked={mode === value} onChange={() => setMode(value)} /><b>{label}</b><small>{hint}</small></label>)}</div>
@@ -832,7 +860,7 @@ const Card = memo(function Card({ item, onOpen, onHover, onQuick, picked, list }
 // 回到首頁時先顯示上次的內容（不用等 API、不閃骨架），同時在背景以同一個 seed 更新
 let homeCache = null
 let homeHeroIndex = 0
-function HomeView({ onOpen, onHover, onQuick, onTag, onShowList, onCollection, collections, linkOf, onVisit, notify, version, personal }) {
+function HomeView({ onOpen, onHover, onQuick, onTag, onShowList, onCollection, collections, linkOf, onVisit, notify, version, changes, personal }) {
   const [seed, setSeed] = useState(() => homeCache?.seed ?? Math.floor(Math.random() * 100000))
   const [data, setDataState] = useState(() => homeCache)
   const setData = update => setDataState(current => { const next = typeof update === 'function' ? update(current) : update; homeCache = next; return next })
@@ -859,9 +887,16 @@ function HomeView({ onOpen, onHover, onQuick, onTag, onShowList, onCollection, c
     const quiet = homeCache?.seed === seed  // 只是回到首頁：畫面照舊，背景更新
     if (!quiet) setLoading(true)
     let live = true  // 連續換一批時，較慢的舊回應不能蓋掉新的
-    api(`/home?seed=${seed}${personal ? '&personal=true' : ''}`).then(result => live && setData(result)).catch(error => live && notify(errorNote(error))).finally(() => live && setLoading(false))
+    api(`/home?seed=${seed}${personal ? '&personal=true' : ''}`).then(result => {
+      if (!live) return
+      // 背景更新時主視覺停在原本那件（例如剛改成閱讀中的作品排到最前面，不要讓正在看的那張換掉）
+      const showing = quiet && homeCache?.hero[homeHeroIndex]?.id
+      const kept = showing ? result.hero.findIndex(entry => entry.id === showing) : -1
+      if (kept >= 0 && kept !== homeHeroIndex) { heroJump.current = true; setHeroIndex(kept) }
+      setData(result)
+    }).catch(error => live && notify(errorNote(error))).finally(() => live && setLoading(false))
     return () => { live = false }
-  }, [seed, version, personal])  // version：復原、還原備份後重新載入；personal：手機直放橫放跨過寬度門檻
+  }, [seed, version, changes, personal])  // version：復原、還原備份後重新載入；changes：新增、修改作品後在背景更新；personal：手機直放橫放跨過寬度門檻
   const index = Math.min(heroIndex, Math.max(0, (data?.hero.length || 1) - 1))
   const hero = data?.hero[index]
   // 主視覺左右滑：跟著手指移動，放開後以 .55s 減速滑到定位；頭尾有阻力不繞圈
@@ -881,7 +916,8 @@ function HomeView({ onOpen, onHover, onQuick, onTag, onShowList, onCollection, c
       slide.style.opacity = !dragging ? '' : position === target ? 1 - progress * 0.75 : 0.25 + progress * 0.75
     }
   }
-  useLayoutEffect(() => place(index), [index, data])
+  const heroJump = useRef(false)  // 背景更新改了主視覺的順序：直接放到定位，同一件作品不播滑動
+  useLayoutEffect(() => { place(index, 0, !heroJump.current); heroJump.current = false }, [index, data])
   const dragStart = event => {
     if (data.hero.length < 2 || event.touches.length !== 1) return
     const touch = event.touches[0]

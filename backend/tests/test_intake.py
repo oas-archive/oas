@@ -45,6 +45,17 @@ def test_process_fills_blank_fields_only(client, monkeypatch):
     assert intake.process(999999)[0] == "skipped"
 
 
+def test_process_fills_pornhub_creator_avatar(client, monkeypatch):
+    """Pornhub 有自己的解析規則，不走「找頁面代表圖」：創作者頁的頭像要由解析規則本身拿到。"""
+    item = add(client, "https://www.pornhub.com/model/kasou-model", source_name="其他網站")
+    page = '<title>Kasou Model | Pornhub</title><img id="getAvatar" src="https://ei.phncdn.com/pics/users/2/a.jpg" alt="kasou"/>'
+    monkeypatch.setattr(metadata, "_get", lambda url: page)
+    monkeypatch.setattr(intake.covers, "schedule", lambda url: None)
+    assert intake.process(item["id"])[0] == "filled"
+    filled = client.get(f"/api/resources/{item['id']}").json()
+    assert filled["image_url"] == "https://ei.phncdn.com/pics/users/2/a.jpg" and filled["title"] == "Kasou Model | Pornhub"
+
+
 def test_rate_limited_items_are_retried_not_dropped(client, monkeypatch):
     item = add(client, "https://example.com/limited", source_name="其他網站")
     calls = []
@@ -249,3 +260,26 @@ def test_gone_page_marks_source_dead_instead_of_retrying_forever(client, monkeyp
     refresh.handle(scheduler.JobInfo(0, "refresh", busy["id"], "https://example.com/busy", "example.com", "all", 0))
     assert client.get(f"/api/resources/{busy['id']}").json()["link_dead"] is True
 
+
+
+def test_intake_status_feeds_the_progress_bar_across_batches(client, monkeypatch):
+    """常駐進度列（frontend/src/progress.js）只看 /api/intake/status：第一批還在補就再收一批，總數要累加、排隊件數倒數到 0；重開後從剩下的算起。"""
+    monkeypatch.setattr(metadata, "_get", lambda url: PAGE.format(title="虛構作品", image=url[-1]))
+    monkeypatch.setattr(intake.covers, "schedule", lambda url: None)
+    client.post("/api/import/urls", json={"urls": ["https://example.com/p1", "https://example.com/p2"]})
+    status = client.get("/api/intake/status").json()
+    assert (status["queued"], status["total"], status["running"]) == (2, 2, True)
+
+    assert scheduler.run_once() == 0  # 補好一件，再貼一批
+    client.post("/api/import/urls", json={"urls": ["https://example.com/p3", "https://example.com/p4", "https://example.com/p5"]})
+    status = client.get("/api/intake/status").json()
+    assert (status["queued"], status["total"]) == (4, 5)  # 畫面顯示 補資料 1／5
+    assert client.get("/api/attention/summary").json()["queued"] == 4  # 待整理也看得到還在排隊的件數
+
+    scheduler.restore_states()  # 關掉再開：從剩下的件數重新算
+    status = client.get("/api/intake/status").json()
+    assert (status["queued"], status["total"], status["running"]) == (4, 4, True)
+
+    scheduler.run_until_idle()
+    status = client.get("/api/intake/status").json()
+    assert (status["queued"], status["running"]) == (0, False)  # 進度列消失

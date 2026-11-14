@@ -25,10 +25,14 @@ export default function ThirdPartyNotices({ close }) {
   const card = useRef(null)
   useEffect(() => {
     let live = true
+    // 只有手機 App 外殼會回這個檔；其他情況（例如伺服器回首頁 HTML）一律當成讀不到
     fetch('/third-party-notices.json').then(response => {
-      if (!response.ok) throw new Error('not found')
+      if (!response.ok || !/json/i.test(response.headers.get('content-type') || '')) throw new Error('not found')
       return response.json()
-    }).then(data => { if (live) setPackages(data.packages) }).catch(() => { if (live) setFailed(true) })
+    }).then(data => {
+      if (!Array.isArray(data?.packages)) throw new Error('bad data')
+      if (live) setPackages(data.packages)
+    }).catch(() => { if (live) setFailed(true) })
     return () => { live = false }
   }, [])
   // Android 返回鍵走瀏覽紀錄：全文 → 清單 → 關閉

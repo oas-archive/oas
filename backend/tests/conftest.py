@@ -14,6 +14,9 @@ os.environ["OAS_LINKCHECK"] = "off"
 os.environ["OAS_JOBS"] = "off"
 os.environ["OAS_SEED"] = "off"
 os.environ["OAS_ALLOWED_HOSTS"] = "localhost,127.0.0.1,testserver"
+# 版本與平台明確設定：公開 repo 的 app 資料夾有公開版標記檔，不設的話測試會以公開版執行。要測公開版的測試自己改 settings。
+os.environ["OAS_EDITION"] = "personal"
+os.environ["OAS_PLATFORM"] = "desktop"
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from fastapi.testclient import TestClient  # noqa: E402

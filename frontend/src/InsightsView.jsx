@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import Maintenance from './Maintenance.jsx'
-import { canReadPages, fillFromPages } from './pageReader.js'
+import { canReadPages, queueReads } from './pageReader.js'
+import { kickProgress, useProgress } from './progress.js'
 import { JM_SEARCH, JM_SOURCE } from './sites.js'
-import { announceRemoved, api, CATEGORY_NAMES, colourFor, CoverFace, coverSrc, Dropdown, hideBroken, isFaceCover, loadTagCategories, STATUS_COLOURS, TAG_CATEGORIES, shortTitle, titleFor, ask, errorNote } from './shared.jsx'
+import { announceRemoved, api, CATEGORY_NAMES, colourFor, CoverFace, coverSrc, Dropdown, hideBroken, isFaceCover, loadTagCategories, STATUS_COLOURS, TAG_CATEGORIES, shortTitle, titleFor, ask, errorNote, imageSrc } from './shared.jsx'
 
 // 「口味」頁看收藏的口味分群；「整理」頁是要動手處理的事（缺資料、重複、標籤、背景維護）
 export const RELATION_TABS = [['taste', '口味地圖']]
@@ -132,7 +133,7 @@ function TagHealth({ onOpenItem, onChanged, notify }) {
         <button type="button" className="ghost" disabled={busy} onClick={() => merge(source.name, entry.target)}>合併</button>
       </li>))}</ul></section>}
 
-    {pairs.length > 0 && <section className="health-block"><h3>幾乎總是一起出現<small>{pairs.length} 組</small></h3><p>兩個標籤九成以上同時出現。可能是同義詞（可以合併），也可能只是常見組合（按「保持分開」就不再提醒）。</p>
+    {pairs.length > 0 && <section className="health-block"><h3>幾乎總是一起出現<small>{pairs.length} 組</small></h3><p>兩個標籤一起出現至少 8 件，而且各自的作品八成以上重疊。可能是同義詞（可以合併），也可能只是常見組合（按「保持分開」就不再提醒）。</p>
       <ul className="health-list">{pairs.map(entry => {
         const pair = `${entry.target}|${entry.source}`
         const [from, to] = swapped.has(pair) ? [entry.target, entry.source] : [entry.source, entry.target]
@@ -298,6 +299,15 @@ function Attention({ onOpenItem, onChanged, notify }) {
   const [data, reload, error] = useLoad('/attention')
   const [busy, setBusy] = useState(false)
   const [matches, setMatches] = useState(null)  // 比對同編號的結果：{ results: { 作品 id: [候選] }, errors: { 作品 id: [訊息] } }；'loading' 為比對中
+  // 背景補資料、手機讀頁的即時進度（progress.js）：排隊件數跟著倒數；任何一種做完就重新整理清單
+  const progress = useProgress()
+  const waitingRead = new Set(progress.pending.map(row => row.id))
+  const running = useRef({ fill: progress.fill.running, read: progress.read.running })
+  useEffect(() => {
+    const before = running.current
+    running.current = { fill: progress.fill.running, read: progress.read.running }
+    if ((before.fill && !progress.fill.running) || (before.read && !progress.read.running)) reload()
+  }, [progress.fill.running, progress.read.running])
   // 在作品頁刪除後回到這裡，清單也要跟著拿掉
   useEffect(() => { window.addEventListener('oas-item-removed', reload); return () => window.removeEventListener('oas-item-removed', reload) }, [])
   const remove = async item => {
@@ -313,21 +323,20 @@ function Attention({ onOpenItem, onChanged, notify }) {
     try {
       const result = await api('/attention/retry', { method: 'POST', body: JSON.stringify({ ids }) })
       notify(result.queued ? `已重新排入 ${result.queued} 件，在背景補資料` : '沒有可以重試的作品')
+      kickProgress()
       onChanged(); await reload()
     } catch (failure) { notify(errorNote(failure)) } finally { setBusy(false) }
   }
   const matchAll = async () => {
     setMatches('loading')
-    try { setMatches(await api('/attention/same-code')) } catch (failure) { setMatches(null); notify(errorNote(failure)) }
+    try { setMatches(await api('/attention/same-code', { method: 'POST' })) } catch (failure) { setMatches(null); notify(errorNote(failure)) }
   }
   const fetchManual = async () => {
     setBusy(true)
     try {
-      if (canReadPages()) {  // 手機 App：一件一件用看不到的瀏覽器打開作品頁，交給伺服器解析後補上
-        const rows = data.groups.manual.filter(item => /^https?:\/\//.test(item.url || ''))
-        const filled = await fillFromPages(api, rows, (index, total) => notify(`讀取作品頁 ${index}/${total}…`))
-        notify(`讀了 ${rows.length} 件作品頁，補到 ${filled} 件`)
-        onChanged(); await reload()
+      if (canReadPages()) {  // 手機 App：排進背景讀頁，一件一件用看不到的瀏覽器打開作品頁；進度在底部的進度列，做完自動重新整理
+        const count = queueReads(data.groups.manual.map(item => ({ id: item.id, url: item.url })))
+        notify(count ? `已排入 ${count} 件，在背景一件一件讀取，進度看底部` : '這些作品已經在排隊讀取')
         return
       }
       const result = await api('/attention/fetch-manual', { method: 'POST' })
@@ -368,16 +377,26 @@ function Attention({ onOpenItem, onChanged, notify }) {
   if (error) return <p className="insight-empty">{error}</p>
   if (!data) return <p className="insight-empty">正在整理…</p>
   const total = ATTENTION_GROUPS.reduce((sum, [key]) => sum + data.groups[key].length, 0)
+  // 還在排隊：伺服器的補資料（問到之後用即時件數；清單載入時的數字另含「補齊作品資訊」）、手機的讀頁佇列；補失敗＝自動補資料沒成功那組
+  const queuedNow = progress.fill.loaded ? progress.fill.queued : data.queued
+  const readLeft = progress.read.running ? progress.pending.length : 0
+  const states = [
+    queuedNow > 0 && ['queue', `${queuedNow} 件排隊補資料`],
+    readLeft > 0 && ['read', `${readLeft} 件等手機讀取`],
+    data.groups.retry.length > 0 && ['failed', `${data.groups.retry.length} 件自動補資料沒成功`],
+  ].filter(Boolean)
+  const manualLabel = readLeft > 0 ? `讀取中 ${progress.read.done}／${progress.read.total}` : busy ? '處理中…' : '試著讀取'
   return <div className={`insight-body${busy ? ' is-busy' : ''}`}>
-    <header className="insight-head"><div><h2>待整理</h2><p>缺標題、缺封面或來源失效的作品，依處理方式分組。{data.queued > 0 && `背景還在補 ${data.queued} 件，補好就不會出現在這裡。`}</p></div></header>
-    {total === 0 ? <p className="insight-empty">都整理好了，沒有缺資料的作品。</p> : <div className="dup-groups"><h3 className="sr-only">作品清單</h3>{ATTENTION_GROUPS.filter(([key]) => data.groups[key].length).map(([key, label, hint]) => <section key={key} className="dup-group">
-      <header><span>{label}（{data.groups[key].length}）</span>{key === 'retry' && <button type="button" className="ghost subtle" disabled={busy} onClick={() => retry([])}>全部重試</button>}{key === 'manual' && <button type="button" className="ghost subtle" disabled={busy} onClick={fetchManual}>{busy ? '處理中…' : '試著讀取'}</button>}{key === 'dead' && <button type="button" className="ghost subtle" disabled={busy || matches === 'loading'} onClick={matchAll}>{matches === 'loading' ? '比對中…' : matches ? '重新比對' : '比對同編號'}</button>}</header>
+    <header className="insight-head"><div><h2>待整理</h2><p>缺標題、缺封面或來源失效的作品，依處理方式分組。還在排隊的補好就不會出現在這裡。</p></div></header>
+    {states.length > 0 && <p className="attention-states" role="status">{states.map(([key, text]) => <span key={key} className={`is-${key}`}>{text}</span>)}</p>}
+    {total === 0 ? <p className="insight-empty">{queuedNow > 0 || readLeft > 0 ? '目前沒有要你處理的作品；排隊中的補好或補不到時會自動更新這裡。' : '都整理好了，沒有缺資料的作品。'}</p> : <div className="dup-groups"><h3 className="sr-only">作品清單</h3>{ATTENTION_GROUPS.filter(([key]) => data.groups[key].length).map(([key, label, hint]) => <section key={key} className="dup-group">
+      <header><span>{label}（{data.groups[key].length}）</span>{key === 'retry' && <button type="button" className="ghost subtle" disabled={busy} onClick={() => retry([])}>全部重試</button>}{key === 'manual' && <button type="button" className="ghost subtle" disabled={busy || readLeft > 0} onClick={fetchManual}>{manualLabel}</button>}{key === 'dead' && <button type="button" className="ghost subtle" disabled={busy || matches === 'loading'} onClick={matchAll}>{matches === 'loading' ? '比對中…' : matches ? '重新比對' : '比對同編號'}</button>}</header>
       <p className="attention-hint">{hint}</p>
       <div className="dup-items">{data.groups[key].map(item => <article key={item.id} className="dup-item" style={{ '--cover-colour': colourFor(item) }}>
         <Thumb item={item} onOpen={onOpenItem} />
         <div>
           <h4 title={titleFor(item)}>{titleFor(item)}</h4>
-          <p><span>{item.source_name}</span>{item.missing.length > 0 && <span className="attention-missing">缺{item.missing.join('、')}</span>}</p>
+          <p><span>{item.source_name}</span>{item.missing.length > 0 && <span className="attention-missing">缺{item.missing.join('、')}</span>}{key === 'manual' && readLeft > 0 && waitingRead.has(item.id) && <span className="attention-waiting">等待讀取</span>}</p>
           <p className="dup-code" title={item.code}>{item.code}</p>
           <div className="dup-actions">
             {(key === 'manual' || key === 'retry') && item.url && <a className={key === 'manual' ? 'primary' : 'ghost'} href={item.url} target="_blank" rel="noreferrer noopener">前往來源 ↗</a>}
@@ -400,7 +419,7 @@ function SameCode({ rows, errors, busy, onPick, onMerge, onOpenOwned }) {
   if (!rows.length) return failed || <p className="same-code is-empty">N 網、紳士、禁漫都沒有這個編號</p>
   return <>
     <ul className="same-code">{rows.map(row => <li key={`${row.source_name}-${row.code}`}>
-      <a href={row.url} target="_blank" rel="noreferrer noopener" title="在來源網站開啟確認"><i>{row.thumb && <img src={row.thumb} alt="" loading="lazy" referrerPolicy="no-referrer" onError={hideBroken} />}</i></a>
+      <a href={row.url} target="_blank" rel="noreferrer noopener" title="在來源網站開啟確認"><i>{row.thumb && <img src={imageSrc(row.thumb)} alt="" loading="lazy" referrerPolicy="no-referrer" onError={hideBroken} />}</i></a>
       <span><b>{row.source_name} {row.code}{row.unconfirmed ? '（未確認）' : ''}</b><small>{row.title}</small></span>
       {row.owned_id
         ? <><button type="button" className="ghost" onClick={() => onOpenOwned(row.owned_id)}>開啟</button><button type="button" className="primary" disabled={busy} onClick={() => onMerge(row)}>合併到它</button></>

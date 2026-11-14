@@ -7,11 +7,15 @@
 - rule     已有規則把它換成別的名稱，但典藏裡的標籤還沒換（例如從備份還原時帶進來的）。
 - variant  和既有規則或翻譯包的原文只差大小寫、空白、連字號、單複數或異體字。
 - same     和另一個現有標籤只差大小寫、空白、連字號、單複數或異體字。
-- s2t      把簡體字（或日文新字體）轉成繁體後就是現有標籤；沒有現有標籤、而且轉法確定時，建議改成繁體。
+- s2t      一般標籤的簡體字或日文漢字轉成繁體後就是現有標籤；沒有現有標籤、而且整個名稱都轉得準時，建議改成繁體。
+           日文漢字用 zhconv.japanese_to_traditional 整個轉（有日本自造字等轉不了的字就不建議，不轉一半）；
+           有假名的名稱逐字轉換翻不了，不做這項，只靠翻譯包、規則、提示字典；都沒有就維持原文。
 - hint     翻譯包 suggest 字典裡的常見同義詞（例：強姦 → 強暴），只提示、不會自動套用。
-- together 英文或簡體標籤幾乎總是和某個繁體標籤一起出現在同樣的作品上，可能是同一個意思（信心低）。
+- together 英文或簡體標籤幾乎總是和某個繁體標籤一起出現在同樣的作品上（often_together），可能是同一個意思（信心低）。
 
-寧可少給：作者、社團、角色的名稱維持原文，只比對大小寫與空白；目標被封鎖、或你按過「略過」的不再建議。
+寧可少給：作者、社團、角色、作品名（原作）有常用譯名時才用——翻譯包或同義詞規則有對應（rule、variant），
+或和現有標籤只差大小寫、空白、異體字（same）；沒有譯名就維持原文，不逐字轉繁體、不看提示字典與共現。
+目標被封鎖、或你按過「略過」的不再建議。
 """
 import json
 import re
@@ -27,11 +31,17 @@ from .archive import resolve_alias, tag_rules
 from .database import PackEntry, Setting, Tag, resource_tags
 
 SKIP_KEY = "tag_suggest_skip"  # 按過「略過」的建議：["原文小寫\t目標", …]
-NAMED_CATEGORIES = {"artist", "group", "character"}  # 名稱維持原文：不翻譯、不轉繁體、不看共現
+NAMED_CATEGORIES = {"artist", "group", "character", "parody"}  # 名稱：只用翻譯包與規則的譯名，不逐字轉繁體、不看提示與共現
 CONFIDENCE = {"rule": 0.99, "variant": 0.95, "same": 0.9, "s2t": 0.9, "s2t_rename": 0.7, "hint": 0.75, "together": 0.5}
-TOGETHER_MIN = 3  # 共現：來源標籤至少要有這麼多件作品
-TOGETHER_SHARE = 0.9  # 來源標籤的作品裡，九成以上也帶著目標標籤
-TOGETHER_REVERSE = 0.5  # 目標標籤的作品裡，至少一半也帶著來源標籤（否則目標只是很常見的標籤）
+# 「幾乎總是一起出現」（這裡與標籤健檢共用）：一起出現的件數要夠多，而且兩個標籤的作品大多重疊。
+# 舊規則只看「較少那個的九成」，三、四件作品就撐得起一組，「近親」包含「姊妹」這類上下位也會列出（2026-11-10 回饋）。
+TOGETHER_MIN = 8  # 至少一起出現在這麼多件作品
+TOGETHER_JACCARD = 0.8  # 一起出現的件數 ÷ 任一個標籤有的件數（兩邊的聯集）
+
+
+def often_together(both: int, count_a: int, count_b: int) -> bool:
+    """兩個標籤各出現 count_a、count_b 件、一起出現 both 件時，算不算「幾乎總是一起出現」。"""
+    return both >= TOGETHER_MIN and both >= TOGETHER_JACCARD * (count_a + count_b - both)
 
 
 def level(score: float) -> str:
@@ -138,6 +148,14 @@ class _Context:
             "method": method.replace("_rename", ""), "score": score, "confidence": level(score), "reason": reason,
         }
 
+    def _existing(self, candidate: str, name: str) -> str | None:
+        """轉換後的寫法對到的現有標籤（或規則的原文）；對不到時回傳 None。"""
+        match = self.lower_names.get(candidate.lower()) or (self.final(candidate) if candidate.lower() in self.aliases else None)
+        if not match:
+            variants = [other for other in self.by_key.get(name_key(candidate), []) if other != name]
+            match = self.preferred(variants) if variants else None
+        return match if match and match != name else None
+
     def _find(self, name: str, named: bool) -> tuple[str, str, str] | None:
         lower, key = name.lower(), name_key(name)
         if lower in self.aliases and self.final(name) != name:
@@ -155,15 +173,21 @@ class _Context:
                 return "same", self.final(target), f"和現有的「{target}」只差大小寫、空白、連字號、單複數或異體字"
         if named:
             return None
-        if zhconv.has_simplified(name):
+        if zhconv.has_kana(name):
+            pass  # 假名翻不了：只看下面的提示字典（翻譯包與規則在前面已比對過）
+        elif zhconv.looks_japanese(name):
+            converted = zhconv.japanese_to_traditional(name)
+            if converted and converted != name:
+                match = self._existing(converted, name)
+                if match:
+                    return "s2t", self.final(match), f"日文漢字轉成繁體是「{converted}」，典藏裡已有「{self.final(match)}」"
+                return "s2t_rename", converted, f"日文漢字，建議改成繁體「{converted}」"
+        elif zhconv.has_simplified(name):
             for candidate in zhconv.candidates(name):
                 if candidate == name:
                     continue
-                match = self.lower_names.get(candidate.lower()) or (self.final(candidate) if candidate.lower() in self.aliases else None)
-                if not match:
-                    variants = [other for other in self.by_key.get(name_key(candidate), []) if other != name]
-                    match = self.preferred(variants) if variants else None
-                if match and match != name:
+                match = self._existing(candidate, name)
+                if match:
                     return "s2t", self.final(match), f"簡體字轉成繁體是「{candidate}」，典藏裡已有「{self.final(match)}」"
             converted = zhconv.to_traditional(name)
             if converted and converted != name and _has_cjk(name):
@@ -191,7 +215,7 @@ def _together(db: Session, ctx: _Context, taken: set[str]) -> list[dict]:
         for other, other_ids in owners.items():
             if other != name and ctx.categories.get(other, "tag") == "tag" and _has_cjk(other) and not zhconv.has_simplified(other):
                 both = len(ids & other_ids)
-                if both >= TOGETHER_SHARE * len(ids) and both >= TOGETHER_REVERSE * len(other_ids):
+                if often_together(both, len(ids), len(other_ids)):
                     together[other] = both
         if len(together) != 1:
             continue  # 同時符合好幾個時分不出是哪一個，寧可不建議

@@ -1,4 +1,4 @@
-"""公開版的第一次啟動設定、封面閘門、App 內備份與翻譯包匯入。"""
+"""手機公開版的第一次啟動設定、封面閘門、App 內備份與翻譯包匯入（電腦公開版見 test_desktop_public.py）。"""
 import json
 
 import pytest
@@ -10,6 +10,7 @@ from app.database import CoverCache, SessionLocal, Setting
 @pytest.fixture
 def public(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "EDITION", "public")
+    monkeypatch.setattr(settings, "PLATFORM", "android")
     monkeypatch.setattr(settings, "BACKUP_DIR", str(tmp_path / "backups"))
     monkeypatch.setattr(settings, "DATA_DIR", tmp_path)
     monkeypatch.setattr(covers, "COVER_DIR", tmp_path / "covers")
@@ -61,13 +62,6 @@ def test_covers_not_downloaded_until_chosen(client, public, monkeypatch):
     assert client.post("/api/covers/cache").status_code == 409
 
 
-def test_cover_without_saving_redirects_to_the_source(client, public):
-    setup_choices(client, save_covers=False)
-    created = client.post("/api/resources", json={"code": "pref-cover", "title": "封面測試", "image_url": "https://example.com/pref.png"}).json()
-    response = client.get(f"/api/covers/{created['id']}", follow_redirects=False)
-    assert response.status_code == 307 and response.headers["location"] == "https://example.com/pref.png"
-
-
 def test_clear_covers_only_when_saving_is_off(client, public):
     setup_choices(client, save_covers=True)
     assert client.post("/api/covers/clear").status_code == 409
@@ -94,6 +88,19 @@ def test_private_backups_are_listed_and_read(client, public):
     names = [row["name"] for row in client.get("/api/backup/files").json()]
     assert set(names) == {"oas-auto-20261106-100000.json", "oas-backup-20261106-110000.json"}
     assert client.get("/api/backup/files/oas-auto-20261106-100000.json").json() == {"format": "x"}
+
+
+def test_personal_phone_lists_private_backups(client, monkeypatch, tmp_path):
+    # 手機個人版也把備份放在私有空間（android_main.py 設 OAS_PRIVATE_BACKUPS=1）；電腦版沒設，仍是 403
+    folder = tmp_path / "backups"
+    folder.mkdir()
+    (folder / "oas-auto-20261107-100000.json").write_text('{"format": "z"}', encoding="utf-8")
+    monkeypatch.setattr(settings, "BACKUP_DIR", str(folder))
+    assert client.get("/api/backup/files").status_code == 403
+    monkeypatch.setattr(settings, "PRIVATE_BACKUPS", True)
+    assert [row["name"] for row in client.get("/api/backup/files").json()] == ["oas-auto-20261107-100000.json"]
+    assert client.get("/api/backup/files/oas-auto-20261107-100000.json").json() == {"format": "z"}
+    assert client.get("/api/preferences").json()["edition"] == "personal"
 
 
 @pytest.mark.parametrize("name", ["other.txt", "..%2Foas.db", "oas-..%2F..%2Fx.json", "oas-a%5Cb.json", "oas-missing.json"])

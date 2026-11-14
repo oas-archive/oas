@@ -6,7 +6,7 @@ import { Component, StrictMode, useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import FirstRun from './FirstRun.jsx'
 import ImmersiveApp from './ImmersiveApp.jsx'
-import { loadPreferences, preferences } from './preferences.js'
+import { loadPreferences } from './preferences.js'
 import './immersive.css'
 
 // 按鈕上的光：滑鼠跟著游標走，觸控在手指按下的位置亮起（樣式見 immersive.css 的 --lit-x、--lit-y）
@@ -34,10 +34,16 @@ class CrashGuard extends Component {
   }
 }
 
-// 先問設定再開畫面：公開版第一次啟動要先做選擇，選之前主畫面不能載入封面或讀網頁
+// 先問設定再開畫面：公開版第一次啟動要先做選擇，選之前主畫面不能載入封面或讀網頁。
+// 讀不到設定時只顯示錯誤與重試，不猜版本：猜成個人版會跳過第一次啟動的選擇、開啟背景讀取
 function Start() {
   const [prefs, setPrefs] = useState(null)
-  useEffect(() => { loadPreferences().then(setPrefs, () => setPrefs(preferences())) }, [])
+  const [failed, setFailed] = useState(null)
+  const load = () => { setFailed(null); loadPreferences().then(setPrefs, error => setFailed(error || new Error('讀取失敗'))) }
+  useEffect(load, [])
+  if (failed) return <main className="crash-screen" role="alert"><h1>讀不到設定</h1><p>典藏館的服務沒有回應設定，所以先不開畫面。你的典藏資料沒有受影響，稍等一下再重試。</p>
+    <button type="button" className="save" onClick={load}>重試</button>
+    <small>{String(failed.message || failed)}</small></main>
   if (!prefs) return null
   return prefs.setup_done ? <ImmersiveApp /> : <FirstRun onDone={setPrefs} />
 }

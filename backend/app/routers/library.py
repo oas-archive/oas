@@ -7,12 +7,12 @@ from datetime import datetime, timezone
 from typing import Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .. import cache, covers, defaults, preferences, scheduler, settings
-from ..archive import BACKUP_FORMAT, BACKUP_VERSION, export_backup, import_records
+from ..archive import BACKUP_FORMAT, BACKUP_VERSION, export_backup, import_records, valid_template
 from ..database import Resource, Source
 from ..deps import db_session
 from ..schemas import BackupPayload, SourceInput, UserPack
@@ -32,6 +32,8 @@ def list_sources(db: Session = Depends(db_session)):
 
 @router.put("/sources")
 def upsert_source(payload: SourceInput, db: Session = Depends(db_session)):
+    if not valid_template(payload.template):
+        raise HTTPException(422, "網址範本要以 http:// 或 https:// 開頭")
     source = db.scalar(select(Source).where(Source.name == payload.name.strip()))
     if source is None:
         source = Source(name=payload.name.strip(), template=payload.template.strip())
@@ -64,13 +66,13 @@ def backup_fingerprint(db: Session = Depends(db_session)):
     return {"fingerprint": cache.cached("backup-fingerprint", lambda: _fingerprint(db))}
 
 
-# App 內的備份（公開版放在私有空間，檔案選擇器看不到，由這裡列出來還原）
+# App 內的備份（手機兩個版本都放在私有空間，檔案選擇器看不到，由這裡列出來還原）；電腦公開版沒有 App，維持 403
 USER_PACK_LIMIT = 50000
 PRIVATE_BACKUP_NAME = re.compile(r"oas-[A-Za-z0-9_-]+\.json")
 
 
 def _private_backups() -> list[os.DirEntry]:
-    if not preferences.is_public():
+    if not (settings.PRIVATE_BACKUPS or (preferences.is_public() and preferences.is_android())):
         raise HTTPException(403, "這個版本沒有 App 內的備份")
     try:
         return [entry for entry in os.scandir(settings.BACKUP_DIR) if entry.is_file() and PRIVATE_BACKUP_NAME.fullmatch(entry.name)]
@@ -118,7 +120,7 @@ def restore(payload: BackupPayload, mode: Literal["merge", "replace"] = "merge",
 
 @router.post("/tag-pack/mine")
 def import_my_pack(payload: UserPack, db: Session = Depends(db_session)):
-    if not preferences.is_public():
+    if not (preferences.is_public() and preferences.is_android()):  # 電腦（含公開版）直接改資料夾裡的檔案
         raise HTTPException(403, "這個版本的翻譯包請直接編輯資料夾裡的檔案")
     if len(payload.translate) + len(payload.suggest) + len(payload.block) > USER_PACK_LIMIT:
         raise HTTPException(422, "翻譯包太大")
@@ -134,19 +136,31 @@ def cover_status(db: Session = Depends(db_session)):
     return covers.stats(db)
 
 
+@router.get("/covers/stored")
+def stored_covers(db: Session = Depends(db_session)):
+    """已存在本機的封面張數與大小，也就是 POST /api/covers/clear 會刪掉的範圍（選「不存」時畫面問要不要刪）。只讀。"""
+    return covers.stored_summary(db)
+
+
 @router.post("/covers/clear")
-def clear_covers(db: Session = Depends(db_session)):
+def clear_covers(response: Response, db: Session = Depends(db_session)):
+    """公開版選了不存之後，由使用者按下才刪除已存在本機的封面與縮圖。選不存但不刪時，舊封面留著，只是不再新增。"""
     if not preferences.is_public():
         raise HTTPException(403, "這個版本不能一次刪除封面")
     if preferences.saving_covers():
-        raise HTTPException(409, "要先設定不把封面存到手機")
-    return {"removed": covers.clear_all(db)}
+        raise HTTPException(409, f"要先設定不把封面存到{preferences.device_name()}")
+    stored = covers.stored_summary(db)["covers"]
+    removed = covers.clear_all(db)
+    if not preferences.is_android():
+        # 電腦的瀏覽器會暫存看過的封面（手機由 App 外殼清 WebView 暫存）；請瀏覽器清掉這個網站的暫存
+        response.headers["Clear-Site-Data"] = '"cache"'
+    return {"removed": removed, "covers": stored}
 
 
 @router.post("/covers/cache", status_code=202)
 def cache_covers(background: BackgroundTasks, retry_failed: bool = False, db: Session = Depends(db_session)):
     if not preferences.saving_covers():
-        raise HTTPException(409, "已設定不把封面存到手機")
+        raise HTTPException(409, f"已設定不把封面存到{preferences.device_name()}")
     if covers.batch_state["running"]:
         raise HTTPException(409, "封面快取正在進行中")
     urls = covers.urls_to_cache(db, retry_failed=retry_failed)
@@ -156,17 +170,34 @@ def cache_covers(background: BackgroundTasks, retry_failed: bool = False, db: Se
     return {"queued": len(urls)}
 
 
+def _remote_response(url: str) -> Response:
+    """把來源的圖片轉給畫面，不存檔，瀏覽器也不留（公開版沒選存封面、以及還沒收錄的預覽圖）。"""
+    try:
+        content, content_type = covers.remote_image(url)
+    except covers.CoverError:
+        raise HTTPException(404, "沒有封面") from None
+    return Response(content, media_type=content_type, headers={"Cache-Control": "no-store", **covers.COVER_HEADERS})
+
+
+@router.get("/covers/preview")
+def cover_preview(url: str = Query(max_length=2000)):
+    """還沒收錄的圖片（新增時的預覽、匯入與找替代來源的小圖）也不讓瀏覽器直接連外部，見 covers.remote_image。"""
+    return _remote_response(url)
+
+
 @router.get("/covers/{resource_id}")
 def cover(resource_id: int, w: int | None = Query(default=None, ge=1, le=4000), db: Session = Depends(db_session)):
     resource = db.get(Resource, resource_id)
     if resource is None or not resource.image_url:
         raise HTTPException(404, "沒有封面")
     entry = covers.cached_entry(db, resource.image_url)
-    if entry is not None:
-        path, media_type = covers.thumbnail_file(entry, w) if w else (covers.cover_file(entry), entry.content_type)
-        return FileResponse(path, media_type=media_type, headers={"Cache-Control": "private, max-age=604800", **covers.COVER_HEADERS})
-    if not covers.redirectable(resource.image_url):
-        raise HTTPException(404, "沒有封面")
-    # 尚未快取：本次交由瀏覽器載入原始網址（與未快取前相同），同時在背景下載，下次即由本機提供。
-    covers.schedule(resource.image_url)
-    return RedirectResponse(resource.image_url, status_code=307, headers={"Cache-Control": "no-store"})
+    if entry is None:
+        # 還沒存到本機：一律由後端抓，不轉址給瀏覽器（外部網址可以再轉址回手機上的其他 App，瀏覽器會帶著通行碼過去）。
+        # 公開版沒選存封面時只轉給畫面不存檔；其他情況抓下來存好，下次直接由本機提供。抓不到（含 24 小時內失敗過）回 404。
+        if not preferences.saving_covers():
+            return _remote_response(resource.image_url)
+        entry = covers.stored_cover(db, resource.image_url)
+        if entry is None:
+            raise HTTPException(404, "沒有封面")
+    path, media_type = covers.thumbnail_file(entry, w) if w else (covers.cover_file(entry), entry.content_type)
+    return FileResponse(path, media_type=media_type, headers={"Cache-Control": "private, max-age=604800", **covers.COVER_HEADERS})

@@ -74,8 +74,8 @@ def test_taste_map_groups_and_scores(client):
 
 
 def test_tag_health_merge_and_remove(client):
-    for index in range(4):
-        add(client, f"t{index}", tags=["Big Breasts", "巨乳"] if index < 3 else ["big breast"])
+    for index in range(9):
+        add(client, f"t{index}", tags=["Big Breasts", "巨乳"] if index < 8 else ["big breast"])
     add(client, "solo", tags=["只出現一次"])
     add(client, "bare")
     health = client.get("/api/insights/tags").json()
@@ -86,15 +86,41 @@ def test_tag_health_merge_and_remove(client):
     assert {item["code"] for item in health["orphans"]} >= {"bare", "solo"}
 
     merged = client.post("/api/tags/merge", json={"source": "Big Breasts", "target": "巨乳"}).json()
-    assert merged["count"] == 3
+    assert merged["count"] == 8
     client.post("/api/tags/merge", json={"source": "big breast", "target": "巨乳"})
-    assert client.get("/api/resources", params={"tags": "巨乳"}).json()["total"] == 4
+    assert client.get("/api/resources", params={"tags": "巨乳"}).json()["total"] == 9
     later = add(client, "later", tags=["BIG BREASTS"])  # 同義詞生效
     assert later["tags"] == ["巨乳"]
 
     assert client.post("/api/tags/remove", json={"name": "只出現一次", "block": True}).json()["count"] == 1
     assert add(client, "again", tags=["只出現一次"])["tags"] == []  # 封鎖後不會再加回來
     assert client.post("/api/tags/merge", json={"source": "不存在", "target": "巨乳"}).status_code == 404
+
+
+def paired_names(client):
+    return [{entry["target"], entry["source"]} for entry in client.get("/api/insights/tags").json()["paired"]]
+
+
+def test_pairs_need_enough_works_and_mutual_overlap(client):
+    """「幾乎總是一起出現」：一起出現至少 8 件，而且兩邊的作品八成以上重疊（共同 ÷ 聯集）。"""
+    for index in range(4):  # 只有幾件作品撐起來的組合：不列
+        add(client, f"few{index}", tags=["星空", "雨夜"])
+    for index in range(10):  # 「親族」包含「表親」（10 件都有親族，親族另外還有 6 件）：上下位，不列
+        add(client, f"sub{index}", tags=["表親", "親族"])
+    for index in range(6):
+        add(client, f"wide{index}", tags=["親族"])
+    for index in range(9):  # 9 件一起、各多 1 件：9 ÷ 11 ≈ 0.82，列出
+        add(client, f"syn{index}", tags=["貓耳", "獸耳娘"])
+    add(client, "syn-a", tags=["貓耳"])
+    add(client, "syn-b", tags=["獸耳娘"])
+    assert paired_names(client) == [{"貓耳", "獸耳娘"}]
+
+
+def test_pair_rule_boundaries():
+    from app.tag_suggest import often_together
+    assert often_together(8, 8, 8) and not often_together(7, 7, 7)  # 件數下限
+    assert often_together(8, 9, 9) and not often_together(8, 10, 10)  # 8 ÷ 10 = 0.8 剛好過、8 ÷ 12 不過
+    assert not often_together(91, 99, 136)  # 大的包含小的：91 ÷ 144 ≈ 0.63
 
 
 def test_duplicates_merge_and_dismiss(client):

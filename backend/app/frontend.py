@@ -7,6 +7,7 @@ from fastapi.staticfiles import StaticFiles
 
 
 UNSAFE_PATH_MARKS = ("\\", ":", "\x00")  # Windows 會把這類路徑當成網路位置或資料流，碰到檔案系統前就要擋下
+CLOSED_PATHS = {"docs", "docs/oauth2-redirect", "redoc", "openapi.json"}  # FastAPI 的 API 文件已關閉（main.py），回 404 而不是首頁
 
 
 class _ImmutableFiles(StaticFiles):
@@ -50,7 +51,7 @@ def install(app: FastAPI, directory: Path) -> bool:
 
     @app.get("/{path:path}", include_in_schema=False)
     def page(path: str):
-        if path == "api" or path.startswith("api/"):
+        if path == "api" or path.startswith("api/") or path in CLOSED_PATHS:
             raise HTTPException(404, "找不到這個 API")
         target = _public_file(root, path)
         if target is not None:  # favicon 等 public 檔案

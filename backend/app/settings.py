@@ -5,7 +5,7 @@
 import os
 from pathlib import Path
 
-VERSION = "0.20.55"
+VERSION = "0.20.68"
 
 
 def _split(raw: str) -> list[str]:
@@ -26,12 +26,35 @@ BACKUP_DIR = os.getenv("OAS_BACKUP_DIR") or str(DATA_DIR / "backups")
 # 打包好的網頁（npm run build 的輸出）；存在時由 API 一併提供，不需要另外的網頁伺服器
 FRONTEND_DIR = Path(os.getenv("OAS_FRONTEND_DIR") or Path(__file__).resolve().parents[2] / "frontend" / "dist")
 
-# 允許跨來源讀取 API 的網頁（開發模式的 Vite 與本機網頁）
-CORS_ORIGINS = _split(os.getenv("OAS_CORS_ORIGINS", "http://localhost:5173,http://localhost:8080"))
+# 另外允許的來源（完整來源，例如 http://127.0.0.1:4000）：CORS 允許清單，寫入的 Origin 檢查也放行。預設沒有：網頁與 API 同源，
+# 開發模式的 Vite（5173）也是代理 /api 而不是跨來源呼叫。注意 security.reject_cross_site_api 仍會擋下瀏覽器標成
+# Sec-Fetch-Site: cross-site／same-site 的 /api 請求（現行瀏覽器都會送），所以列在這裡的網頁在瀏覽器裡實際上還是呼叫不到；
+# 只對不送這個標頭的客戶端有作用。手機版 android_main.py 設的是 App 自己的來源（同源，本來就放行）。
+CORS_ORIGINS = _split(os.getenv("OAS_CORS_ORIGINS", ""))
 # 典藏館只從本機開啟；其他主機名稱（例如解析到 127.0.0.1 的惡意網域，即 DNS rebinding）一律拒絕。
 ALLOWED_HOSTS = [host.lower() for host in _split(os.getenv("OAS_ALLOWED_HOSTS", "localhost,127.0.0.1"))]
 # 手機版：同一支手機上的其他 App 也連得到 127.0.0.1，所以 App 每次啟動產生一組通行碼，只放在自己 WebView 的 cookie；
 # 有設定時，/api 的請求都要帶這個 cookie（健康檢查除外）。電腦版不設定，行為不變。
 API_TOKEN = os.getenv("OAS_API_TOKEN") or ""
-EDITION = os.getenv("OAS_EDITION") or "personal"  # "public"：手機公開版，有第一次啟動的選擇，見 preferences.py
+PRIVATE_BACKUPS = os.getenv("OAS_PRIVATE_BACKUPS") == "1"  # 手機版：備份在 App 私有空間，備份中心要能列出來還原（android_main.py 設定）
+# 版本：OAS_EDITION 有設定時以它為準；沒設定時，app 資料夾裡有標記檔就是公開版（匯出公開版時才放進去），否則是 personal。
+# 公開版有第一次啟動的選擇，見 preferences.py。標記檔只看有沒有，內容不讀。
+APP_DIR = Path(__file__).resolve().parent
+PUBLIC_MARKER = "public_edition.txt"
+
+
+def detect_edition(env: str | None, app_dir: Path) -> str:
+    if env:
+        return env
+    return "public" if (app_dir / PUBLIC_MARKER).is_file() else "personal"
+
+
+def detect_platform(env: str | None) -> str:
+    """OAS_PLATFORM=android 是手機 App（android_main.py 設定），其他一律當電腦。問哪幾題、哪些手機才有的功能開放看這個。"""
+    return "android" if env == "android" else "desktop"
+
+
+EDITION = detect_edition(os.getenv("OAS_EDITION"), APP_DIR)
+PLATFORM = detect_platform(os.getenv("OAS_PLATFORM"))
 TOKEN_COOKIE = "oas_token"
+IMAGE_ENGINE = os.getenv("OAS_IMAGE_ENGINE") or "pillow"  # "android"：手機公開版用系統內建的解碼器，見 imaging.py

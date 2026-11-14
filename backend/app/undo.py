@@ -11,6 +11,7 @@ from sqlalchemy import delete, insert, select
 from sqlalchemy.orm import Session, selectinload
 
 from .archive import isoformat, parse_datetime
+from .batching import chunks
 from .database import Collection, Resource, Tag, TagAlias, TagBlock, UndoEntry, collection_items, resource_tags
 
 KEEP_MINUTES = 60
@@ -154,8 +155,8 @@ def apply(db: Session, entry_id: int) -> dict:
                 target.category = payload["target_category"]
             keep = set(payload["target_owners"])
             drop = [rid for rid in owners if rid not in keep]
-            if drop:
-                db.execute(delete(resource_tags).where(resource_tags.c.tag_id == target.id, resource_tags.c.resource_id.in_(drop)))
+            for batch in chunks(drop):  # 標籤可能有幾萬件作品，分批才不會超過參數上限
+                db.execute(delete(resource_tags).where(resource_tags.c.tag_id == target.id, resource_tags.c.resource_id.in_(batch)))
             if payload["target_created"] and not db.scalar(select(resource_tags.c.resource_id).where(resource_tags.c.tag_id == target.id).limit(1)):
                 db.delete(target)
         for alias, canonical in payload["aliases"].items():

@@ -343,7 +343,7 @@ def test_compare_tool_translates_ids_and_hides_private_values(tmp_path):
 
 
 def together_library(client):
-    for number in range(4):
+    for number in range(8):
         add(client, f"p{number}", tags=["甲標籤", "乙標籤"])
 
 

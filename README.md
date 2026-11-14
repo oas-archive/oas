@@ -4,12 +4,13 @@
 
 # OAS 典藏館
 
-**收藏連結，不收藏檔案。** 線上漫畫、同人誌、動畫與影片（含成人向）的個人典藏：<br>
+**收藏連結，不收藏作品。** 線上漫畫、同人誌、動畫與影片（含成人向）的個人典藏：<br>
 貼上作品網址，自動補上標題、封面與標籤，記下看到哪裡、喜不喜歡，看出自己的口味。
 
-[下載免安裝版](../../releases) · [截圖](#截圖) · [安裝與使用](#安裝與使用) · [常見問題](#常見問題) · [English](#english)
+[下載](../../releases) · [截圖](#截圖) · [安裝與使用](#安裝與使用) · [常見問題](#常見問題) · [English](#english)
 
-![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6) ![Python](https://img.shields.io/badge/Python-3.11-3776AB) ![License: MIT](https://img.shields.io/badge/License-MIT-green) ![18+](https://img.shields.io/badge/內容-18%2B-red)
+![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6)
+![Python](https://img.shields.io/badge/Python-3.11%E2%80%933.13-3776AB) ![License: MIT](https://img.shields.io/badge/License-MIT-green) ![18+](https://img.shields.io/badge/內容-18%2B-red)
 
 </div>
 
@@ -19,7 +20,7 @@
 ## 適合誰
 
 - 常在線上看漫畫、同人誌、動畫或影片，作品散在好幾個網站，書籤亂成一團的人。
-- 想記住看過什麼、看到第幾話、喜不喜歡，但不想下載檔案、也不想架伺服器的人。
+- 想記住看過什麼、看到第幾話、喜不喜歡，但不想下載作品、也不想架伺服器的人。
 - 想從自己的評分看出口味，找到下一本要看什麼的人。
 
 ## 實際怎麼用
@@ -34,23 +35,23 @@
 | | 瀏覽器書籤 | 下載型管理工具 | OAS |
 |---|---|---|---|
 | 作品檔案 | 不存 | 存在自己的硬碟 | 不存，留在原網站 |
-| 標題、封面、標籤 | 只有網頁標題 | 依工具而定 | 自動補上 |
+| 標題、封面、標籤 | 只有網頁標題 | 依工具而定 | 自動補上；封面圖片存不存由你選 |
 | 閱讀進度與評分 | 沒有 | 多半有 | 有 |
 | 口味分析與相關作品 | 沒有 | 依工具而定 | 有 |
 | 失效連結 | 點了才知道 | 不適用 | 定期檢查並標出來 |
-| 硬碟空間 | 幾乎不佔 | 很多 | 很少，只有資料與封面縮圖 |
+| 硬碟空間 | 幾乎不佔 | 很多 | 不多：資料，加上選擇存下的封面圖片（每張最大 10 MB） |
 
 ## OAS 不做什麼
 
 - 不提供、不下載、不轉存作品，也沒有內建閱讀器。
-- 不破解付費內容，也不規避驗證碼或其他防護；讀不到的頁面就交給你自己處理。
-- 不需要帳號、不收費、沒有廣告，也不會把你的資料傳到任何地方。
+- 不破解付費內容，也沒有破解驗證碼的程式；要你操作的驗證不會處理，讀不到的頁面就交給你自己。
+- 不需要帳號、不收費、沒有廣告、沒有遙測，也不會把你的資料傳給開發者；讀取作品資料、封面與檢查連結時會連到那些網站。
 
 **嚴禁用於收錄或管理任何涉及未滿 18 歲者的性相關內容。**
 
 ## 能做什麼
 
-- **只存連結和資料**：作品留在原網站，典藏館只記標題、封面、標籤和你的紀錄，幾乎不佔硬碟空間；記憶體約 100 MB。
+- **不存作品**：作品留在原網站，典藏館只記網址、標題、標籤和你的紀錄；封面圖片要不要存在本機，第一次啟動時由你選，之後也能改。記憶體約 100 MB。
 - **貼網址就收錄**：自動讀取標題、封面與標籤；一次貼上數百個網址也行，在背景依網站控制頻率慢慢補，關掉再開會接著補。
 - **閱讀紀錄**：未讀、閱讀中、已完食等狀態，0.5 星評分，看到第幾話；從外部網站看完回來時，順手評分。
 - **標籤整理**：依網站抓作者、社團、原作、角色等分類；英文標籤自動轉繁體中文；同義詞、封鎖清單、合併與刪除都能復原；「標籤健檢」找出分類可能錯誤或沒用到的標籤。
@@ -58,7 +59,7 @@
 - **看出口味**：首頁推薦、口味地圖、相關作品、統計、作者資料頁，以及「挑一本未讀」。
 - **整理收藏**：書單與智慧書單、批次編輯、重複作品偵測（標題、網址、封面相同），所有修改都能復原。
 - **照顧舊收藏**：定期巡檢來源，標出已失效的連結，並能到其他網站找同一本、一鍵改用新來源。
-- **備份**：關閉時自動備份（保留最近 14 份），也能隨時下載完整備份、合併或取代還原。
+- **備份**：關閉時自動備份（保留最近 14 份），也能隨時下載完整備份、合併或取代還原。備份不含封面圖片，還原後會再向來源網站取得。
 
 ## 截圖
 
@@ -76,13 +77,14 @@
 
 1. 到 [Releases](../../releases) 下載 `OAS-v<版本>-windows-x64.zip`，解壓縮到任意資料夾（例如「文件」）。
 2. 雙擊資料夾裡的 **`開啟 OAS.cmd`**；想要桌面捷徑，可在 `tools\create-shortcut.ps1` 上按右鍵 →「用 PowerShell 執行」。
-3. 典藏館以獨立視窗開啟；關閉視窗後會自動備份並結束服務。
+3. 第一次開啟會先請你確認已滿 18 歲，並選擇封面要不要存在這台電腦；之後可在「整理 → 維護」更改。
+4. 典藏館以獨立視窗開啟；關閉視窗後會自動備份並結束服務。
 
 不需要另外安裝 Python 或 Node.js。需要 Google Chrome 或 Microsoft Edge。
 
 ### 從原始碼執行
 
-需要 [Python](https://www.python.org/downloads/) 3.11 以上與 [Node.js](https://nodejs.org/) LTS。下載原始碼後執行 `tools\create-shortcut.ps1` 建立捷徑，第一次開啟會自動建立執行環境並打包網頁（約一兩分鐘）。
+需要 [Python](https://www.python.org/downloads/) 3.11～3.13 與 [Node.js](https://nodejs.org/) LTS。下載原始碼後執行 `tools\create-shortcut.ps1` 建立捷徑，第一次開啟會自動建立執行環境並打包網頁（約一兩分鐘），接著一樣會先確認年齡、選擇封面存不存。
 
 ## 讀取作品資料
 
@@ -92,9 +94,9 @@
 
 ## 隱私與安全
 
-- **資料只在你的電腦上**：資料庫、封面快取、備份都在本機（預設 `%LOCALAPPDATA%\OAS`），沒有任何遙測或上傳。
-- **只開放本機**：服務只聽 `127.0.0.1`，同一網路的其他裝置連不進來；會改資料的請求只接受典藏館自己的網頁，其他網站無法在背景操作。
-- **對網站友善**：只讀取作品頁，依網站控制請求頻率（部分網站每 6 秒一件），被限流就暫停；不實作規避驗證碼、Cloudflare 或其他反自動化機制。
+- **資料只在你的裝置上**：資料庫、封面、備份都在本機（Windows 預設 `%LOCALAPPDATA%\OAS`），沒有任何遙測或上傳。選了不存封面時只留網址，封面圖片不存進本機。封面、預覽圖一律由本機的程式抓，畫面不直接連外部網站。
+- **只開放本機**：服務只聽 `127.0.0.1`，同一網路的其他裝置連不進來；典藏館的 API 只接受自己的網頁：你瀏覽的其他網站無法在背景讀取或修改典藏，也不能叫它去抓圖片。
+- **對網站友善**：只讀取作品頁，依網站控制請求頻率（部分網站每 6 秒一件），被限流就暫停。沒有破解驗證碼或繞過登入的程式。
 
 ## 常見問題
 
@@ -103,6 +105,9 @@
 
 **和下載型的管理工具有什麼不同？**
 OAS 不下載作品，只記錄連結與資料，適合在網站上直接閱讀的漫畫與影片。如果你想管理已經下載的檔案，可以看看 LANraragi、Stash 這類工具。
+
+**封面要存還是不存？**
+存：看得快，來源移除圖片後仍看得到，圖片會留在本機。不存：只留網址，封面每次向來源網站載入，沒有網路或來源移除圖片時就看不到。之後可在「整理 → 維護」更改；改成不存時，可以選擇刪掉已經存下的封面。
 
 **資料存在哪裡？要怎麼搬到別台電腦？**
 預設在 `%LOCALAPPDATA%\OAS`（可用環境變數 `OAS_DATA_DIR` 改位置）。最簡單的方式是在「備份中心」下載完整備份，到新電腦用「還原」匯入。
@@ -114,10 +119,10 @@ OAS 不下載作品，只記錄連結與資料，適合在網站上直接閱讀�
 可以。第一次啟動後，資料夾（預設 `%LOCALAPPDATA%\OAS`）裡會有一個空的 `tag_pack_private.json`，照裡面的說明寫入「原文: 譯名」，重新啟動就會套用。入門翻譯包只有一般標籤，作品名、角色名可以寫在這裡。這個檔案只有你有，更新版本不會動到。
 
 **某個網站一直讀不到？**
-可能被網站限流或有防護。背景作業會自動暫停那個網站、稍後再試；有防護的網站請改用「收錄到 OAS」書籤。
+可能被網站限流或有防護。背景作業會自動暫停那個網站、稍後再試；有防護的網站，請改用「收錄到 OAS」書籤，或自己填寫。
 
-**可以給手機或其他電腦用嗎？**
-目前不行：典藏館沒有登入機制，只開放本機使用。
+**可以從其他裝置連進來嗎？**
+不行：典藏館沒有登入機制，只開放本機使用。各裝置的資料是獨立的，要搬資料就用備份檔還原或合併。
 
 ## 架構
 
@@ -140,9 +145,10 @@ cd backend
 python -m venv .venv
 .venv\Scripts\pip install -r requirements-dev.txt
 .venv\Scripts\python -m pytest -q
-.venv\Scripts\python -m uvicorn app.main:app --port 8000 --reload
+.venv\Scripts\python -m uvicorn app.main:app --port 8080 --reload
 
-# 另開一個視窗（/api 轉給 8000 埠）
+# 另開一個視窗：/api 轉給 8080 埠（和桌面捷徑同一埠，兩者不要同時開）
+# 後端用其他埠時，先設 $env:OAS_API_URL = "http://localhost:8000"
 cd frontend
 npm ci
 npm run dev
@@ -157,4 +163,9 @@ npm run dev
 ---
 
 <a id="english"></a>
-**English.** OAS is a local-first personal catalogue for manga, doujinshi, anime and videos you read or watch on the web. It stores links and metadata — title, cover, tags, reading status, rating, progress — never the works themselves. Features include background metadata fetching with per-site rate limiting, tag categories, synonyms and translation, duplicate detection, dead-link checks, taste analysis and undo for every change. Windows portable build: download from Releases, unzip, double-click `開啟 OAS.cmd`. The UI is in Traditional Chinese. For adults only (18+). MIT licensed.
+**English.** OAS is a local-first personal catalogue for manga, doujinshi, anime and videos you read or watch on the web.
+It stores links and metadata — title, tags, reading status, rating, progress — never the works themselves.
+On first launch you confirm that you are 18 or older and choose whether cover images are saved on this computer; you can change this later.
+Features include background metadata fetching with per-site rate limiting, tag categories, synonyms and translation, duplicate detection, dead-link checks, taste analysis and undo for every change.
+Windows portable build: download from Releases, unzip, double-click `開啟 OAS.cmd`.
+The UI is in Traditional Chinese. For adults only (18+). MIT licensed.

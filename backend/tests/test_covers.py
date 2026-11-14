@@ -1,4 +1,8 @@
+import io
+import threading
 import time
+import urllib.request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 from PIL import Image
@@ -35,11 +39,13 @@ def wait_for(predicate, seconds=5):
     return False
 
 
-def test_cover_miss_redirects_then_serves_local(client, fake_download):
+def test_cover_miss_is_fetched_by_the_backend_then_served_locally(client, fake_download, monkeypatch):
+    # 個人版也不再 307 轉址到來源：外部網址可以再轉址回手機上的其他 App，瀏覽器會帶著通行碼過去
+    monkeypatch.setattr(covers, "schedule", lambda url: None)  # 不讓新增時的背景下載先存好，這裡要看讀封面這一次
     item = make(client, "1", "https://img.example/1.png")
     first = client.get(f"/api/covers/{item['id']}", follow_redirects=False)
-    assert first.status_code == 307 and first.headers["location"] == "https://img.example/1.png"
-    assert wait_for(lambda: client.get("/api/covers/status").json()["cached"] == 1)
+    assert first.status_code == 200 and "location" not in first.headers and first.content == PNG
+    assert fake_download == ["https://img.example/1.png"] and client.get("/api/covers/status").json()["cached"] == 1
     second = client.get(f"/api/covers/{item['id']}", follow_redirects=False)
     assert second.status_code == 200 and second.headers["content-type"] == "image/png" and second.content == PNG
     # 直接開啟封面網址也不准瀏覽器猜類型、不執行程式
@@ -132,8 +138,17 @@ def test_svg_cached_by_old_versions_is_not_served(client, monkeypatch):
         db.commit()
     monkeypatch.setattr(covers, "download", lambda url: (_ for _ in ()).throw(covers.CoverError("只接受點陣圖")))
     response = client.get(f"/api/covers/{item['id']}", follow_redirects=False)
-    assert response.status_code == 307 and b"<script>" not in response.content
-    assert client.get(f"/api/covers/{item['id']}", params={"w": 360}, follow_redirects=False).status_code == 307
+    assert response.status_code == 404 and b"<script>" not in response.content and "location" not in response.headers
+    assert client.get(f"/api/covers/{item['id']}", params={"w": 360}, follow_redirects=False).status_code == 404
+
+
+def test_uncached_cover_source_failure_is_404_and_not_retried_every_time(client, fake_download, monkeypatch):
+    monkeypatch.setattr(covers, "schedule", lambda url: None)
+    item = make(client, "1", "https://img.example/broken.png")
+    for _ in range(3):
+        response = client.get(f"/api/covers/{item['id']}", follow_redirects=False)
+        assert response.status_code == 404 and "location" not in response.headers
+    assert fake_download == ["https://img.example/broken.png"]  # 24 小時內失敗過的不再連線
 
 
 @pytest.mark.parametrize("extension,kind", [("tif", "TIFF"), ("bmp", "BMP"), ("ppm", "PPM")])
@@ -155,3 +170,139 @@ def test_image_bomb_is_refused(tmp_path):
     Image.MAX_IMAGE_PIXELS = None
     Image.new("1", (9000, 9000)).save(path, "PNG")
     assert covers.image_ratio(path) is None and covers.image_colour(path) == "" and covers.image_fingerprint(path) == ""
+
+
+class SlowResponse(FakeResponse):
+    """每次只送一點點的慢速來源：每段都推進假的時鐘，不真的等待、不連外。"""
+
+    def __init__(self, clock, seconds_per_chunk):
+        super().__init__("image/png", b"x" * 10)
+        self.clock, self.seconds_per_chunk, self.reads = clock, seconds_per_chunk, 0
+
+    def read1(self, size):
+        self.reads += 1
+        self.clock[0] += self.seconds_per_chunk
+        return self.body
+
+
+def test_slow_source_is_cut_off_within_total_time(monkeypatch):
+    clock = [1000.0]
+    slow = SlowResponse(clock, seconds_per_chunk=4)
+    monkeypatch.setattr(covers, "_clock", lambda: clock[0])
+    monkeypatch.setattr(covers, "check_url", lambda url: None)
+    monkeypatch.setattr(covers, "safe_urlopen", lambda request, timeout: slow)
+    with pytest.raises(covers.CoverError, match="超過"):
+        covers.fetch_image("https://img.example/slow.png")
+    assert clock[0] - 1000.0 <= covers.TOTAL_SECONDS + 4  # 最多多等一段
+    assert slow.reads == 4
+
+
+def test_image_finishing_in_time_is_read_in_chunks(monkeypatch):
+    clock = [0.0]
+
+    class Quick(FakeResponse):
+        def __init__(self):
+            super().__init__("image/png")
+            self.parts = [b"\x89PNG", b"-part2", b""]
+
+        def read1(self, size):
+            clock[0] += 1
+            return self.parts.pop(0)
+
+    monkeypatch.setattr(covers, "_clock", lambda: clock[0])
+    monkeypatch.setattr(covers, "check_url", lambda url: None)
+    monkeypatch.setattr(covers, "safe_urlopen", lambda request, timeout: Quick())
+    assert covers.fetch_image("https://img.example/ok.png") == (b"\x89PNG-part2", "image/png")
+
+
+class FakeSocket:
+    def __init__(self):
+        self.timeouts = []
+
+    def settimeout(self, value):
+        self.timeouts.append(value)
+
+
+class OneByteRaw(io.RawIOBase):
+    """每次只給一個位元組、並推進假的時鐘：模擬一點一點送回應標頭的來源。"""
+
+    def __init__(self, clock, data, seconds_per_byte):
+        super().__init__()
+        self.clock, self.data, self.seconds_per_byte = clock, data, seconds_per_byte
+
+    def readable(self):
+        return True
+
+    def readinto(self, buffer):
+        self.clock[0] += self.seconds_per_byte
+        if not self.data:
+            return 0
+        buffer[0], self.data = self.data[0], self.data[1:]
+        return 1
+
+
+def test_every_wait_is_limited_by_the_remaining_total_time(monkeypatch):
+    clock = [100.0]
+    monkeypatch.setattr(covers, "_clock", lambda: clock[0])
+    sock = FakeSocket()
+    reader = io.BufferedReader(covers._DeadlineRaw(OneByteRaw(clock, b"HTTP/1.1 200 OK\r\nX-Slow: " + b"a" * 100, 3), sock, 115.0))
+    with pytest.raises(TimeoutError, match="總時限"):
+        reader.readline(); reader.readline()  # 標頭是一行一行讀的：單一行就能拖很久
+    assert sock.timeouts and all(0 < value <= covers.TIMEOUT_SECONDS for value in sock.timeouts)
+    assert sock.timeouts[-1] <= 3  # 越接近截止，等待上限越短
+    assert clock[0] <= 115.0 + 3
+
+
+@pytest.fixture()
+def slow_site(monkeypatch):
+    """本機的假來源（不連外）：/headers 一個位元組一個位元組地送標頭，/r0、/r1… 每次等一下才轉址到下一個。"""
+    hits = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            hits.append(self.path)
+            try:
+                if self.path == "/headers":
+                    self.wfile.write(b"HTTP/1.1 200 OK\r\n")
+                    for byte in b"X-Slow: " + b"a" * 400:
+                        self.wfile.write(bytes([byte]))
+                        self.wfile.flush()
+                        time.sleep(0.05)
+                else:
+                    time.sleep(0.3)
+                    self.send_response(302)
+                    self.send_header("Location", f"/r{int(self.path[2:]) + 1}")
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+            except OSError:
+                pass  # 客戶端時間到就斷線
+
+        def log_message(self, *_):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    server.daemon_threads = True
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    monkeypatch.setattr(covers, "TOTAL_SECONDS", 1.0)
+    monkeypatch.setattr(covers, "public_address", lambda address: True)  # 讓本機的假來源通過位址檢查
+    monkeypatch.setattr(covers, "_opener", urllib.request.build_opener(  # 不經過系統代理設定
+        urllib.request.ProxyHandler({}), covers._CheckedRedirect, covers._CheckedHTTPHandler, covers._CheckedHTTPSHandler))
+    yield f"http://127.0.0.1:{server.server_address[1]}", hits
+    server.shutdown()
+
+
+def test_slow_response_headers_are_cut_off_within_total_time(slow_site):
+    base, _ = slow_site
+    start = time.monotonic()
+    with pytest.raises(covers.CoverError, match="總時限"):
+        covers.fetch_image(f"{base}/headers")
+    assert time.monotonic() - start < 2.5  # 沒有總時限時每個位元組都在 12 秒內送到，會一直等下去
+
+
+def test_redirect_chain_is_cut_off_within_total_time(slow_site):
+    base, hits = slow_site
+    start = time.monotonic()
+    with pytest.raises(covers.CoverError, match="總時限"):
+        covers.fetch_image(f"{base}/r0")
+    assert time.monotonic() - start < 2.5
+    assert len(hits) < 10  # 不會把 10 次轉址都走完

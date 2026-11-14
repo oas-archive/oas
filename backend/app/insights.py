@@ -16,6 +16,7 @@ from . import metadata
 from .archive import serialise
 from .covers import with_ratios
 from .database import Resource, Setting, Tag, TagAlias, collection_items, resource_tags
+from .tag_suggest import TOGETHER_MIN, often_together
 
 # 口味地圖只用這些分類的標籤分群；語言、類別幾乎每件都有，分不出口味。
 THEME_CATEGORIES = {"tag", "parody", "artist", "group"}
@@ -163,8 +164,9 @@ def tag_health(db: Session) -> dict:
     similar.sort(key=lambda entry: -sum(source["count"] for source in entry["sources"]))
     similar_pairs = {frozenset((entry["target"], source["name"])) for entry in similar for source in entry["sources"]}
 
-    # 2. 幾乎總是一起出現：兩個一般標籤九成以上同時出現，可能是同義詞（也可能只是常見組合，由你決定）。
-    eligible = {name for name, count in counts.items() if count >= 3 and categories.get(name, "tag") == "tag"}
+    # 2. 幾乎總是一起出現：兩個一般標籤一起出現至少 8 件、而且兩邊的作品八成以上重疊（tag_suggest.often_together），
+    #    可能是同義詞（也可能只是常見組合，由你決定）。
+    eligible = {name for name, count in counts.items() if count >= TOGETHER_MIN and categories.get(name, "tag") == "tag"}
     together: Counter = Counter()
     for row in resources:
         names = sorted(tag.name for tag in row.tags if tag.name in eligible)
@@ -173,8 +175,7 @@ def tag_health(db: Session) -> dict:
     # 件數變動後目標與來源可能對調，兩個方向都算保留過
     kept_pair_sets = {frozenset(pair.split("|", 1)) for pair in kept_pairs(db)}
     for (a, b), both in together.items():
-        small, large = sorted((counts[a], counts[b]))
-        if both >= 0.9 * small and small / large >= 0.5 and frozenset((a, b)) not in similar_pairs and frozenset((a, b)) not in kept_pair_sets:
+        if often_together(both, counts[a], counts[b]) and frozenset((a, b)) not in similar_pairs and frozenset((a, b)) not in kept_pair_sets:
             target, source = (a, b) if (counts[a], _has_cjk(a)) >= (counts[b], _has_cjk(b)) else (b, a)
             paired.append({"target": target, "source": source, "together": both, "target_count": counts[target], "source_count": counts[source]})
     paired.sort(key=lambda entry: (-entry["together"], entry["target"]))

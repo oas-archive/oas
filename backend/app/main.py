@@ -64,7 +64,8 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="Omni-Archive System API", version=settings.VERSION, lifespan=lifespan)
+# 不提供 /docs、/redoc、/openapi.json：API 文件頁要載外部程式，也會把整份 API 攤給任何連得到的人看。
+app = FastAPI(title="Omni-Archive System API", version=settings.VERSION, lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 security.install(app)
 for module in (misc, resources, collections, tags, insights, library, jobs):
     app.include_router(module.router)

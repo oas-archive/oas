@@ -97,11 +97,18 @@ def parse_pornhub(page: str) -> dict:
     uploader = (re.search(r'class="usernameWrap.{0,2000}?<a[^>]*href="/(?:model|channels|users|pornstar)/[^"]*"[^>]*>([^<]+)</a>', info, re.S) if marker in page
                 else re.search(r'class="usernameWrapper">\s*<a[^>]*href="/(?:model|channels|users|pornstar)/[^"]*"[^>]*>([^<]+)</a>', page))
     people = _unique([*([uploader.group(1)] if uploader else []), *labelled("pornstar")])
-    return {"title": _meta(page, "og:title"), "image_url": _meta(page, "og:image"), "tags": [*labelled("category"), *labelled("tag"), *people],
+    # 創作者頁（model／pornstar／channels）沒有 og 標籤：封面用頭像（電腦版與手機版都是 id="getAvatar"），標題用 <title>
+    avatar_tag = re.search(r'<img[^>]*\sid="getAvatar"[^>]*>', page)
+    avatar = (re.search(r'\ssrc="(https?://[^"]+)"', avatar_tag.group(0)) or [None, ""])[1] if avatar_tag else ""
+    title = _meta(page, "og:title")
+    if not title and avatar:
+        title = (re.search(r"<title[^>]*>([^<]*)</title>", page, re.I) or [None, ""])[1]
+    return {"title": title, "image_url": _meta(page, "og:image") or avatar, "tags": [*labelled("category"), *labelled("tag"), *people],
             "categories": {name: "artist" for name in people}}
 
 
-MISSAV_KINDS = {"actresses": "artist", "genres": "tag", "tags": "tag", "series": "tag", "makers": "group", "labels": "group", "directors": "artist"}
+# 系列（series）是一串作品標題，不當標籤（2026-11-10 擁有者回報超長敘述變成標籤）
+MISSAV_KINDS = {"actresses": "artist", "genres": "tag", "tags": "tag", "makers": "group", "labels": "group", "directors": "artist"}
 
 
 def parse_missav(page: str) -> dict:
@@ -110,7 +117,7 @@ def parse_missav(page: str) -> dict:
     names, categories = [], {}
     for part in page.split('<div class="text-secondary">')[1:101]:
         row = part.split("</div>", 1)[0] if "</div>" in part else ""
-        for kind, name in re.findall(r'<a[^>]*href="[^"]*/(actresses|genres|tags|series|makers|labels|directors)/[^"]*"[^>]*>([^<]+)</a>', row):
+        for kind, name in re.findall(r'<a[^>]*href="[^"]*/(actresses|genres|tags|makers|labels|directors)/[^"]*"[^>]*>([^<]+)</a>', row):
             names.append(name)
             if MISSAV_KINDS[kind] != "tag":
                 categories[html.unescape(name).strip()] = MISSAV_KINDS[kind]

@@ -91,9 +91,12 @@ def attention_retry(payload: RetryInput, db: Session = Depends(db_session)):
     return {"queued": intake.enqueue(attention.retry_ids(db, payload.ids))}
 
 
-@router.get("/attention/same-code")
+@router.post("/attention/same-code")
 def attention_same_code(db: Session = Depends(db_session)):
-    """「來源失效」那組一次比對同編號：每件作品在 N 網、紳士、禁漫有沒有同一個編號的作品，讓你選要改用哪個；查失敗的另外列出。"""
+    """「來源失效」那組一次比對同編號：每件作品在 N 網、紳士、禁漫有沒有同一個編號的作品，讓你選要改用哪個；查失敗的另外列出。
+
+    用 POST：會連外，只讓典藏館自己的網頁觸發（其他網站用隱形圖片就能送 GET，可能讓來源網站限流）。
+    """
     rows = [row for row, _ in attention.classify(db)[0]["dead"]]
     return alternatives.same_code_many(db, rows)
 
@@ -162,7 +165,7 @@ def linkcheck_stop():
 
 @router.get("/system/status")
 def system_status(db: Session = Depends(db_session)):
-    """側欄底部的系統狀態：最後備份時間、封面快取、背景作業。備份資料夾由 OAS_BACKUP_DIR 指定（手機版是「下載/OAS」）。"""
+    """側欄底部的系統狀態：最後備份時間、封面快取、背景作業。備份資料夾由 OAS_BACKUP_DIR 指定（手機版是 App 私有空間）。"""
     latest, count = None, 0
     try:
         files = [entry for entry in os.scandir(settings.BACKUP_DIR) if entry.is_file() and entry.name.startswith("oas-") and entry.name.endswith(".json")]

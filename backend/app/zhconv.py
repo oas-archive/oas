@@ -1,8 +1,10 @@
-"""簡體字、日文新字體 → 台灣繁體的常用字表（標籤建議用，不連外部服務、手機上也能跑）。
+"""簡體字、日文新字體 → 台灣繁體的常用字表（標籤建議與搜尋用，不連外部服務、手機上也能跑）。
 
 只收一對一、不會轉錯的字；一個簡體字對應好幾個繁體字的（发→髮／發、后→後／后…）放在 AMBIGUOUS，
 轉換時列出所有可能，只有其中一種剛好是典藏裡現有的標籤時才採用。
+日文新字體和簡體字放在同一張表（搜尋時兩種都摺疊成繁體）；建議改成繁體時先用 looks_japanese 排除日文名稱。
 """
+import re
 from itertools import product
 
 # 兩兩成對：上一行是簡體或日文字，下一行同位置是繁體字。
@@ -35,11 +37,73 @@ AMBIGUOUS: dict[str, tuple[str, ...]] = {
 # 異體字：比對「名稱幾乎一樣」時視為同一個字（不用來改名）。
 VARIANTS = str.maketrans({"姐": "姊", "栖": "棲", "着": "著", "裏": "裡", "爲": "為", "衆": "眾", "綑": "捆", "啓": "啟", "羣": "群", "峯": "峰", "牀": "床", "歎": "嘆", "汙": "污"})
 
+# 日文新字體 → 台灣繁體，補在 TABLE 之外（只用在判定為日文的名稱；TABLE 也給搜尋用，不動它）。
+_JAPANESE_PAIRS = (
+    "専対絶駅隠姫継斎雑帯営労恵斉剤両満弾犠駄渓曽桟呉娯稲査縁隷収歴暦勲薫渇掲穏晩渉頬痩戻亀蛍窓霊隣繋噛掴嘘鋳涜懐壊壌醤奨歓勧顕穂",
+    "專對絕驛隱姬繼齋雜帶營勞惠齊劑兩滿彈犧馱溪曾棧吳娛稻查緣隸收歷曆勳薰渴揭穩晚涉頰瘦戾龜螢窗靈鄰繫嚙摑噓鑄瀆懷壞壤醬獎歡勸顯穗",
+)
+# 只出現在日文名稱裡時才這樣轉：中文也有這些字，不能拿來判斷是不是日文。
+_JAPANESE_SHARED = {"芸": "藝", "糸": "絲", "缶": "罐"}
+# 日本自造字與「々」：日文才有、又沒有對應的繁體字（々 轉換時重複前一個字）。
+_JAPANESE_NO_EQUIVALENT = "込畑峠匂働枠辻凪栃々"
+# 日文名稱裡意思不只一種、轉不準的字（予定＝預定、予＝我；弁＝辯／辨／瓣；欠＝缺／欠）：有這些字就不建議。
+_JAPANESE_UNSURE = "予弁欠"
+# 一對多的簡體字裡，日文不會用的（日文名稱裡出現代表混著簡體，不猜）。其餘一對多的字（面、台、系…）日文照原樣寫。
+_SIMPLIFIED_AMBIGUOUS = "发历须获尽汇钟脏复冲杰伙坛"
+# 繁體才有的字：簡體那一列對到的繁體字（簡體中文也照樣使用的「著」除外）。
+_SHARED_WITH_SIMPLIFIED = "著"
+
 MAX_CANDIDATES = 16  # 一對多的字太多時只試前幾種組合
 
 
+assert len(_JAPANESE_PAIRS[0]) == len(_JAPANESE_PAIRS[1]), "日文字表上下兩行要一樣長"
+JAPANESE_TABLE: dict[str, str] = {**TABLE, **dict(zip(*_JAPANESE_PAIRS)), **_JAPANESE_SHARED}
+_SIMPLIFIED = set(_PAIRS[0][0]) | set(AMBIGUOUS)
+# 日文才有的字：字表日文那一列裡不是簡體字的，加上補的新字體與日本自造字。簡體中文不會這樣寫，出現就當成日文。
+JAPANESE_ONLY = frozenset((set(_PAIRS[1][0]) | set(_JAPANESE_PAIRS[0]) | set(_JAPANESE_NO_EQUIVALENT)) - _SIMPLIFIED)
+TRADITIONAL_ONLY = frozenset(set(_PAIRS[0][1]) - set(TABLE) - set(AMBIGUOUS) - set(_SHARED_WITH_SIMPLIFIED))
+# 平假名、片假名（含長音「ー」與半形片假名）；中文也會用的間隔號「・」不算。
+_KANA = re.compile(r"[ぁ-ゖゝ-ゟァ-ヺー-ヿㇰ-ㇿｦ-ﾟ]")
+
+
 def has_simplified(text: str) -> bool:
+    """名稱裡有沒有字表裡的字（簡體字或日文新字體都算）；要判斷是不是簡體中文用 looks_simplified。"""
     return any(char in TABLE or char in AMBIGUOUS for char in text)
+
+
+def has_kana(text: str) -> bool:
+    return bool(_KANA.search(text))
+
+
+def looks_japanese(text: str) -> bool:
+    """看起來是日文：有假名、有日文才有的字，或同時有繁體才有的字和字表裡的字（簡體中文不會混用，例：「計画」）。"""
+    if has_kana(text) or any(char in JAPANESE_ONLY for char in text):
+        return True
+    return any(char in TRADITIONAL_ONLY for char in text) and has_simplified(text)
+
+
+def looks_simplified(text: str) -> bool:
+    """看起來是簡體中文：有字表裡的字，而且不是日文。"""
+    return has_simplified(text) and not looks_japanese(text)
+
+
+def japanese_to_traditional(text: str) -> str | None:
+    """日文漢字名稱整個轉成繁體；有轉不了或轉不準的字（日本自造字、予、混著的簡體一對多字）時回傳 None，不轉一半。
+    假名不轉，所以有假名的名稱不該拿來建議改名。"""
+    result: list[str] = []
+    for char in text:
+        if char == "々":
+            if not result:
+                return None
+            result.append(result[-1])
+            continue
+        if char in _JAPANESE_UNSURE or char in _SIMPLIFIED_AMBIGUOUS:
+            return None
+        converted = JAPANESE_TABLE.get(char, char)
+        if converted in JAPANESE_ONLY:
+            return None
+        result.append(converted)
+    return "".join(result)
 
 
 def to_traditional(text: str) -> str | None:

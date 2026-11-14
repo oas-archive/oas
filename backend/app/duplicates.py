@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from . import cache
+from .batching import chunks
 from .covers import url_hash
 from .metadata import SITE_KIND, icon_url
 from .database import CoverCache, DuplicateDismissal, Resource
@@ -138,8 +139,10 @@ def _cover_hashes(db: Session, resources: list[Resource]) -> dict[int, int]:
     wanted = {row.id: url_hash(row.image_url.strip()) for row in resources if _real_cover(row)}
     if not wanted:
         return {}
-    known = dict(db.execute(select(CoverCache.url_hash, CoverCache.fingerprint).where(
-        CoverCache.url_hash.in_(set(wanted.values())), CoverCache.status == "ok")).all())
+    known: dict[str, str | None] = {}
+    for batch in chunks(sorted(set(wanted.values()))):  # 一次查全部會超過 SQLite 的參數上限（見 batching.py）
+        known.update(db.execute(select(CoverCache.url_hash, CoverCache.fingerprint).where(
+            CoverCache.url_hash.in_(batch), CoverCache.status == "ok")).all())
     hashes = {}
     for item_id, key in wanted.items():
         value = known.get(key)

@@ -18,6 +18,8 @@
   .bar span { display: block; width: 40%; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #8c82ff, #d17c9f); animation: slide 1.4s ease-in-out infinite }
   .slow { margin-top: 18px; opacity: 0; transition: opacity .6s; font-size: 12px }
   .slow.show { opacity: 1 }
+  .stalled img, .stalled .bar span { animation: none }
+  .stalled .bar span { width: 100%; background: #9fa9c455 }
   @keyframes float { 50% { transform: translateY(-8px) } }
   @keyframes slide { from { transform: translateX(-110%) } to { transform: translateX(260%) } }
   @media (prefers-reduced-motion: reduce) { img, .bar span { animation: none } }
@@ -32,20 +34,29 @@
   <p class="slow" id="slow">第一次開啟要準備執行環境、打包網頁，可能需要一兩分鐘，請稍候。</p>
 </main>
 <script>
+  // 這一頁是 file://，探測服務的請求是跨來源的。典藏館的回應都帶 Cross-Origin-Resource-Policy: same-origin，
+  // 瀏覽器會擋下（不論服務有沒有就緒都失敗），所以只探測專用的 /launch-probe（後端 security.py 只對它放寬）。
   // 服務尚未就緒時請求會失敗；就緒後（即使是不透明回應）即跳轉。
   const target = 'http://localhost:8080/'
+  const probe = target + 'launch-probe'
   const started = Date.now()
+  let stalled = false
   const poll = async () => {
+    const abort = new AbortController()
+    const timer = setTimeout(() => abort.abort(), 3000)  // 連線卡住時不要一直等，下一輪再試
     try {
-      await fetch(target, { mode: 'no-cors', cache: 'no-store' })
+      await fetch(probe, { mode: 'no-cors', cache: 'no-store', signal: abort.signal })
       location.replace(target)
       return
-    } catch { /* 尚未就緒 */ }
+    } catch { /* 尚未就緒 */ } finally { clearTimeout(timer) }
     const seconds = (Date.now() - started) / 1000
     if (seconds > 20) document.getElementById('slow').classList.add('show')
-    if (seconds > 300) {
+    if (seconds > 90 && !stalled) {
+      stalled = true
+      document.body.classList.add('stalled')
       document.querySelector('h1').textContent = '啟動時間比預期久'
-      document.getElementById('status').textContent = '若跳出錯誤視窗，請依提示處理；也可以關閉此頁後重新點擊捷徑。'
+      document.getElementById('status').textContent = '典藏館的服務還沒有回應。若跳出錯誤視窗，請依視窗的說明處理；沒有的話可以再等一下，或關閉這個視窗後重新點一次捷徑。'
+      document.getElementById('slow').textContent = '第一次開啟可能需要幾分鐘。執行紀錄在典藏館資料夾的 logs 裡（server-error.log、setup.log）。服務就緒後這一頁仍會自動進入。'
     }
     setTimeout(poll, 1000)
   }

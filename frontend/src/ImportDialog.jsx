@@ -1,11 +1,11 @@
 // 一次收錄：貼上就解析（規則只有後端一份，見 batch_plan.py），這裡只顯示一行狀態與看不懂的提示，不逐筆勾選
 import { useEffect, useState } from 'react'
-import { canReadPages, fillFromPages } from './pageReader.js'
-import { api, confirmLeave, errorNote, hideBroken, TOUCH, useFocusTrap } from './shared.jsx'
+import { canReadPages, queueReads } from './pageReader.js'
+import { kickProgress, useProgress } from './progress.js'
+import { api, confirmLeave, errorNote, hideBroken, TOUCH, useFocusTrap, imageSrc } from './shared.jsx'
 import { PROTECTED } from './sites.js'
 
 const SHOWN_HINTS = 4
-const POLL_MS = 2000
 // 「複製格式」：每段底下留空讓人填，不放範例數字，免得忘記改就收到別的作品
 const FORMAT = 'N：\n\nW：\n\nJM：\n'
 const post = (path, body) => api(path, { method: 'POST', body: JSON.stringify(body) })
@@ -35,7 +35,7 @@ function SearchHint({ row, added, onAdd, notify }) {
     <div className="import-hint-row"><span><code>{row.text}</code><small>{!plans ? '不是網址或編號' : results.length ? `找到 ${results.length} 件` : '沒有搜到'}</small></span>
       {!plans && <button type="button" className="import-link" disabled={busy} onClick={search}>{busy ? '搜尋中…' : '搜尋'}</button>}</div>
     {results.length > 0 && <ul className="import-results">{results.map(item => <li key={item.url}>
-      <i>{item.thumb && <img src={item.thumb} alt="" loading="lazy" referrerPolicy="no-referrer" onError={hideBroken} />}</i>
+      <i>{item.thumb && <img src={imageSrc(item.thumb)} alt="" loading="lazy" referrerPolicy="no-referrer" onError={hideBroken} />}</i>
       <span title={item.title}>{item.title}<small>{item.site}</small></span>
       <button type="button" className="import-link" disabled={added.has(item.url)} onClick={() => onAdd(item.url)}>{added.has(item.url) ? '已加入' : '加入'}</button>
     </li>)}</ul>}
@@ -43,31 +43,32 @@ function SearchHint({ row, added, onAdd, notify }) {
   </li>
 }
 
-// 收錄之後：一條總進度，失敗的才列出來。作品已經存好，關掉視窗也會繼續補
+// 收錄之後：一條總進度，失敗的才列出來。作品已經存好，關掉視窗也會繼續補：
+// 伺服器補資料與手機讀頁的進度都在全域（progress.js、pageReader.js），這裡只算這一批的件數；側欄與手機底部的進度列也看得到
 function Progress({ report, notify, onDone, onUndo, onAgain, close }) {
   const created = report.created
   const blocked = created.filter(row => PROTECTED.test(row.url))
   const reader = canReadPages()
   const unreadable = reader ? [] : blocked
   const background = created.length - blocked.length
+  const progress = useProgress()
+  const [opened] = useState(() => Date.now())
   const [queued, setQueued] = useState(background)
-  const [read, setRead] = useState(0)
-  const [reading, setReading] = useState(reader && blocked.length > 0)
   const [failed, setFailed] = useState([])
+  const [sent, setSent] = useState(false)  // 這一批已經排進讀頁佇列（排之前算讀取中，免得一開視窗就當成做完）
+  const waiting = new Set(progress.pending.map(row => row.id))
+  const readLeft = !reader ? 0 : !sent ? blocked.length : blocked.filter(row => waiting.has(row.id)).length
+  const reading = readLeft > 0 && (!sent || progress.read.running)
   const finished = queued === 0 && !reading
   const total = background + (reader ? blocked.length : 0)
-  const done = Math.max(0, background - queued) + read
-  const readPages = rows => {
-    setReading(true)
-    setRead(0)
-    fillFromPages(api, rows, index => setRead(index)).finally(() => { setRead(rows.length); setReading(false); onDone() })
-  }
-  useEffect(() => { if (reader && blocked.length) readPages(blocked) }, [])
+  const done = Math.max(0, background - queued) + (reader ? blocked.length - readLeft : 0)
   useEffect(() => {
-    if (queued === 0) return
-    const timer = setInterval(() => api('/intake/status').then(state => setQueued(Math.min(queued, state.queued))).catch(() => {}), POLL_MS)
-    return () => clearInterval(timer)
-  }, [queued])
+    if (reader && blocked.length) queueReads(blocked)
+    setSent(true)
+    kickProgress()
+  }, [])
+  // 收錄之前問到的「還在排隊」不算：這一批是收錄時才排進去的
+  useEffect(() => { if (progress.fill.loaded && progress.fill.at >= opened) setQueued(current => Math.min(current, progress.fill.queued)) }, [progress.fill])
   useEffect(() => {
     if (!finished || !created.length) return
     onDone()
@@ -78,9 +79,10 @@ function Progress({ report, notify, onDone, onUndo, onAgain, close }) {
   const retry = async row => {
     setFailed(current => current.filter(item => item.id !== row.id))
     try {
-      if (row.again === 'read') { if (reader) readPages([{ id: row.id, url: row.url }]) } else {
+      if (row.again === 'read') { if (reader) queueReads([{ id: row.id, url: row.url }]) } else {
         const { queued: count } = await post('/attention/retry', { ids: [row.id] })
         setQueued(count)
+        kickProgress()
       }
     } catch (error) { notify(errorNote(error)) }
   }

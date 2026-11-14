@@ -14,7 +14,7 @@ from urllib.parse import parse_qs, urljoin, urlsplit
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from . import tag_suggest
+from . import tag_hygiene, tag_suggest
 from .archive import DEFAULT_SOURCE, explain_tag_rules, tag_rules
 from .covers import CoverError, check_url, safe_urlopen
 from .database import Resource, Source
@@ -245,13 +245,14 @@ def parse(url: str, page: str) -> dict:
     host = _host(_split(url).hostname or "")  # 鏡像網域（18comic.org、jmcomic1.me）用同一個解析規則
     data = PARSERS.get(host, parse_generic)(_defuse(page))
     image = data.get("image_url") or ""
+    tags, categories = tag_hygiene.clean(data.get("tags") or [], data.get("categories"))  # 框框、版本標記、超長敘述不算標籤；名稱去掉括號別名
     result = {
         "title": clean_title(data.get("title") or ""),
         "image_url": _join(url, image) if image else "",
-        "tags": _unique(data.get("tags") or [])[:60],
+        "tags": _unique(tags)[:60],
     }
-    if data.get("categories"):
-        result["categories"] = data["categories"]
+    if categories:
+        result["categories"] = categories
     if data.get("canonical"):
         result["canonical"] = _join(url, data["canonical"])
     if result["title"] and not result["image_url"]:

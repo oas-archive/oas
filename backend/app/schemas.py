@@ -1,18 +1,34 @@
 """API 的輸入格式（請求內容的欄位與限制）。"""
 from typing import Literal
 
-from pydantic import VERSION, BaseModel, Field
+from pydantic import VERSION, BaseModel, Field, constr
 
 from .archive import DEFAULT_SOURCE
 
 # 手機版（Android）沒有 pydantic v2 需要的 pydantic-core（Rust 編譯），改用純 Python 的 v1；電腦版仍用 v2。
-# 兩版只有這兩處寫法不同，其他地方照常使用 BaseModel 與 Field。
+# 兩版只有這幾處寫法不同，其他地方照常使用 BaseModel 與 Field。
 PYDANTIC_V1 = VERSION.startswith("1.")
 
+if PYDANTIC_V1:
+    from pydantic import validator as _validator
+else:
+    from pydantic import field_validator as _validator
 
-def Items(*, min_length: int, max_length: int):  # 與 Field 同樣當成欄位設定使用，所以用大寫開頭
-    """清單的件數限制：v2 叫 min_length／max_length，v1 叫 min_items／max_items。"""
-    return Field(min_items=min_length, max_items=max_length) if PYDANTIC_V1 else Field(min_length=min_length, max_length=max_length)
+
+def Items(*, min_length: int, max_length: int, default=...):  # 與 Field 同樣當成欄位設定使用，所以用大寫開頭
+    """清單的件數限制：v2 叫 min_length／max_length，v1 叫 min_items／max_items。default 省略時為必填。"""
+    if PYDANTIC_V1:
+        return Field(default, min_items=min_length, max_items=max_length)
+    return Field(default, min_length=min_length, max_length=max_length)
+
+
+def Pairs(field: str, *, max_length: int):
+    """字典的件數限制（v1 的 Field 不能限制字典大小，兩版都改用驗證函式）。在類別裡寫 check_x = Pairs("x", max_length=…)。"""
+    def check(cls, value):
+        if len(value) > max_length:
+            raise ValueError(f"最多 {max_length} 項")
+        return value
+    return _validator(field, allow_reuse=True)(check) if PYDANTIC_V1 else _validator(field)(check)
 
 
 def dump(model: BaseModel, **options) -> dict:
@@ -34,6 +50,11 @@ class UserPack(BaseModel):
 
 StatusValue = Literal["未讀", "閱讀中", "已完食", "暫時擱置", "棄坑"]
 
+# 標籤名稱與分類（作者、角色…）的長度上限：資料庫欄位是 100 字、分類 20 字，但 SQLite 不強制，
+# 已存在的長標籤編輯後原樣送回不能被擋，所以名稱給寬一點，與標題同為 500。
+TagName = constr(max_length=500)
+TagCategory = constr(max_length=40)
+
 
 # ---------- 作品 ----------
 
@@ -47,8 +68,20 @@ class ResourceInput(BaseModel):
     status: StatusValue = "未讀"
     kind: str = Field(default="", max_length=20)
     progress: str = Field(default="", max_length=40)
-    tags: list[str] = []
-    tag_categories: dict[str, str] = {}  # 讀作品頁得到的分類（作者、角色…），只標記還是一般標籤的；不存進作品本身
+    # 編輯時送回作品現有的全部標籤（合併、多次補資料會累積），件數比照批次操作的 2000
+    tags: list[TagName] = Items(min_length=0, max_length=2000, default=[])
+    tag_categories: dict[TagName, TagCategory] = {}  # 讀作品頁得到的分類（作者、角色…），只標記還是一般標籤的；不存進作品本身
+    check_categories = Pairs("tag_categories", max_length=2000)
+
+
+class FillBlanksInput(BaseModel):
+    """分享或書籤帶來的作品已在典藏中：這次讀到的資料，只補進那一件的空白欄位（見 resources.fill_blanks）。"""
+    title: str = Field(default="", max_length=500)
+    image_url: str = Field(default="", max_length=2000)
+    # 表單上的標籤（分享帶來的最多 60 個、自己加的）與讀作品頁得到的（metadata.parse 最多 60 個）取聯集
+    tags: list[TagName] = Items(min_length=0, max_length=300, default=[])
+    tag_categories: dict[TagName, TagCategory] = {}
+    check_categories = Pairs("tag_categories", max_length=300)
 
 
 class QuickInput(BaseModel):

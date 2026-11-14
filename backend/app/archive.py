@@ -11,6 +11,12 @@ from .titles import short_title
 
 STATUSES = ["未讀", "閱讀中", "已完食", "暫時擱置", "棄坑"]
 DEFAULT_SOURCE = "其他網站"
+
+
+def valid_template(template: str) -> bool:
+    """網站規則的網址範本只收 http(s)（或「{}」＝代碼本身就是網址）：file:、javascript: 等不能拿來開啟或讀取。"""
+    template = template.strip()
+    return template == "{}" or template.lower().startswith(("http://", "https://"))
 BACKUP_FORMAT = "oas-backup"
 BACKUP_VERSION = 5  # 2：類型、標籤分類、同義詞與封鎖清單；3：自訂書單；4：閱讀進度、完食時間、智慧書單；5：巡檢時間、標籤健檢的保留清單、不是重複的組合
 
@@ -88,6 +94,29 @@ def assign_tags(db: Session, resource: Resource, values: Iterable[str], categori
             db.flush()
         tags.append(tag)
     resource.tags = tags
+
+
+class TagWriter:
+    """一次替很多件作品寫標籤（還原備份、手機同步）：結果與每件呼叫 assign_tags 相同，但
+    同義詞與封鎖清單只讀一次、現有標籤一次查好放在對照表（新建立的也記進去），不必每件、每個標籤各查一次資料庫。
+    只在這段期間規則與標籤不會被別的地方改動時使用（還原在同一個工作階段內寫完才 commit）。"""
+
+    def __init__(self, db: Session, categories: dict[str, str] | None = None):
+        self.db = db
+        self.categories = categories or {}
+        self.aliases, self.blocked = tag_rules(db)
+        self.by_name = {tag.name: tag for tag in db.scalars(select(Tag))}
+
+    def assign(self, resource: Resource, values: Iterable[str]) -> None:
+        tags = []
+        for name in apply_tag_rules(self.aliases, self.blocked, values):
+            tag = self.by_name.get(name)
+            if tag is None:
+                tag = Tag(name=name, category=self.categories.get(name, "tag"))
+                self.db.add(tag)  # 最後一次 flush 才寫入；編號依加入的順序，和逐一 flush 時相同
+                self.by_name[name] = tag
+            tags.append(tag)
+        resource.tags = tags
 
 
 def parse_datetime(value) -> datetime | None:
@@ -236,13 +265,14 @@ def import_records(
     for source in sources:
         name = (source.get("name") or "").strip()
         template = (source.get("template") or "").strip()
-        if not name or not template or name in known_sources:
+        if not name or not valid_template(template) or name in known_sources:
             continue
         db.add(Source(name=name[:120], template=template[:2000], kind=str(source.get("kind") or "")[:20]))
         known_sources.add(name)
         report["sources_created"] += 1
 
     existing = {(row.source_name, row.code): row for row in db.execute(select(Resource.id, Resource.source_name, Resource.code, Resource.link_checked_at, Resource.updated_at))}
+    writer = TagWriter(db, tag_categories)  # 規則在上面已經寫好並 flush，之後不再變
     seen = set(existing)
     for item in resources:
         code = str(item.get("code") or "").strip()[:500]
@@ -276,7 +306,7 @@ def import_records(
         )
         db.add(resource)
         tags = item.get("tags") or []
-        assign_tags(db, resource, split_tags(tags) if isinstance(tags, str) else tags, categories=tag_categories)
+        writer.assign(resource, split_tags(tags) if isinstance(tags, str) else tags)
         report["created"] += 1
 
     db.flush()

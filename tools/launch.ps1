@@ -39,7 +39,8 @@ function Test-Web {
 
 function Show-Error([string]$text) {
     Add-Type -AssemblyName System.Windows.Forms
-    [System.Windows.Forms.MessageBox]::Show($text, 'OAS 典藏館', 'OK', 'Warning') | Out-Null
+    # 啟動畫面這時還開著、不會自己結束，提醒使用者關掉它（它在 90 秒後也會改成「啟動時間比預期久」的說明）
+    [System.Windows.Forms.MessageBox]::Show("$text`n`n處理好之後，請關閉「正在喚醒典藏館」的視窗，再點一次捷徑。", 'OAS 典藏館', 'OK', 'Warning') | Out-Null
     exit 1
 }
 
@@ -87,7 +88,7 @@ function Initialize-Runtime {
     }
     if (-not (Test-Path $python)) {
         $system = (Get-Command python -ErrorAction SilentlyContinue).Source
-        if (-not $system -or $system -like '*WindowsApps*') { Show-Error "找不到 Python。請先安裝 Python 3.11 以上（https://www.python.org），安裝時勾選「Add python.exe to PATH」，再重新點一次捷徑。" }
+        if (-not $system -or $system -like '*WindowsApps*') { Show-Error "找不到 Python。請先安裝 Python 3.11～3.13（https://www.python.org），安裝時勾選「Add python.exe to PATH」，再重新點一次捷徑。" }
         if (-not (Invoke-Tool $system @('-m', 'venv', $venv) $log)) { Show-Error "建立 Python 執行環境失敗，詳細內容在 $log。" }
         if (-not (Invoke-Tool $python @('-m', 'pip', 'install', '--disable-pip-version-check', '-r', (Join-Path $backend 'requirements.txt')) $log)) {
             Remove-Item -Recurse -Force $venv -ErrorAction SilentlyContinue  # 裝到一半就刪掉，下次重新來過

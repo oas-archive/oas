@@ -1,6 +1,6 @@
 # 第三方授權聲明
 
-OAS 本身採 MIT 授權（見 [LICENSE](LICENSE)）。免安裝版另外包含下列第三方軟體，各自依其授權條款提供。免安裝版也附帶 Python 3.11 可嵌入版，其授權（PSF-2.0）見壓縮檔 `python/LICENSE.txt`。
+OAS 本身採 MIT 授權（見 [LICENSE](LICENSE)）。免安裝版另外包含下列第三方軟體，各自依其授權條款提供。免安裝版也附帶 Python 3.13.17 可嵌入版，其授權（PSF-2.0）見壓縮檔 `python/LICENSE.txt`。
 
 | 套件 | 版本 | 授權 | 用於 |
 |---|---|---|---|

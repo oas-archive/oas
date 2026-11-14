@@ -141,6 +141,26 @@ def test_normalise_saved_relinks_and_merges(sources):
     assert {item["id"] for item in sources.get("/api/resources?limit=50").json()["items"]} >= {first["id"], second["id"]}  # 其他網站不動
 
 
+def test_normalise_saved_merge_carries_tags_and_lists_without_preloading(sources):
+    """啟動整理不再先載入每件的標籤與書單：合併時才讀，標籤、書單照樣併進保留的那件，被併掉的關聯都刪乾淨。"""
+    from app import intake
+    add = lambda **body: sources.post("/api/resources", json=body).json()
+    shared = add(code="https://18comic.org/album/9999021/x", source_name="其他網站", title="虛構分享 Comics - 禁漫天堂", tags=["虛構甲", "共用"])
+    jm = add(code="9999021", source_name="JM", tags=["虛構乙", "共用"])  # 保留的這件編號比較大，合併時還沒輪到它
+    first = sources.post("/api/collections", json={"name": "虛構書單一"}).json()["id"]
+    second = sources.post("/api/collections", json={"name": "虛構書單二"}).json()["id"]
+    sources.post(f"/api/collections/{first}/items", json={"ids": [shared["id"]]})
+    sources.post(f"/api/collections/{second}/items", json={"ids": [shared["id"], jm["id"]]})
+    assert intake.normalise_saved()["merged"] == 1
+    kept = sources.get(f"/api/resources/{jm['id']}").json()
+    assert kept["tags"] == ["共用", "虛構乙", "虛構甲"] and kept["collections"] == sorted([first, second]) and kept["title"] == "虛構分享"
+    assert sources.get(f"/api/resources/{shared['id']}").status_code == 404
+    with SessionLocal() as db:
+        from app.database import collection_items, resource_tags
+        assert not db.execute(select(resource_tags).where(resource_tags.c.resource_id == shared["id"])).all()
+        assert not db.execute(select(collection_items).where(collection_items.c.resource_id == shared["id"])).all()
+
+
 def test_jm_photo_page_is_the_album(sources):
     from app import intake
     with SessionLocal() as db:
@@ -280,6 +300,28 @@ def test_site_types_studios_and_mobile_pages():
 <a data-label="tag" class="item isTag" href="/video/search?search=cum"><span>cum</span></a>'''
     p = metadata.parse("https://www.pornhub.com/view_video.php?viewkey=2", mobile)
     assert p["tags"] == ["内射中出", "cum", "Maker B"] and p["categories"] == {"Maker B": "artist"}  # 去掉認證標記與機器翻譯那份
+
+
+# Pornhub 創作者頁沒有 og 標籤：電腦版的頭像有 class，手機版沒有；推薦欄的其他頭像（js-menuSwap）不算
+PORNHUB_CREATOR_PC = '''<title>Kasou Model&#039;s Profile &#124; Example</title>
+<img class="js-menuSwap" data-image="https://ei.phncdn.com/pics/users/1/other.jpg" alt="Other">
+<img id="getAvatar" src="https://ei.phncdn.com/pics/users/2/kasou-avatar.jpg" class="jcrop-preview" alt="kasou"/>
+<img class="avatar avatarTrigger" src="https://ei.phncdn.com/pics/users/2/kasou-avatar.jpg" alt="kasou">'''
+PORNHUB_CREATOR_MOBILE = '''<html><head><title>Kasou Model 個人頁 &#124; Example</title></head>
+<body><img src="https://ei.phncdn.com/www-static/logo.png"><img id="getAvatar" src="https://ei.phncdn.com/pics/users/2/kasou-avatar.jpg" alt="kasou"/></body></html>'''
+
+
+@pytest.mark.parametrize("page, title", [(PORNHUB_CREATOR_PC, "Kasou Model's Profile | Example"), (PORNHUB_CREATOR_MOBILE, "Kasou Model 個人頁 | Example")])
+def test_pornhub_creator_page_uses_avatar(page, title):
+    p = metadata.parse("https://www.pornhub.com/model/kasou-model", page)
+    assert p["image_url"] == "https://ei.phncdn.com/pics/users/2/kasou-avatar.jpg" and p["title"] == title and p["tags"] == []
+
+
+def test_pornhub_video_page_keeps_og_image_and_ignores_title_element():
+    video = '<title>Video - Pornhub.com</title><meta property="og:image" content="https://ei.phncdn.com/videos/1/thumb.jpg" />'
+    assert metadata.parse("https://www.pornhub.com/view_video.php?viewkey=3", video)["image_url"] == "https://ei.phncdn.com/videos/1/thumb.jpg"
+    gate = "<title>Pornhub</title><p>age check</p>"  # 沒有頭像也沒有 og 標籤（例如年齡驗證頁）：不把網站名稱當標題
+    assert metadata.parse("https://www.pornhub.com/view_video.php?viewkey=4", gate) == {"title": "", "image_url": "", "tags": []}
 
 
 @pytest.mark.parametrize("fragment", ["<meta ", '<meta name="og:title" ', '<meta name="x"', "<img ", '<img alt="a" ', "<link ", "<title>", "<a ", " ", '"', "<"])

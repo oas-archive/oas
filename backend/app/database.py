@@ -38,6 +38,9 @@ resource_tags = Table(
     Column("resource_id", ForeignKey("resources.id", ondelete="CASCADE"), primary_key=True),
     Column("tag_id", ForeignKey("tags.id", ondelete="CASCADE"), primary_key=True),
 )
+# 主鍵是（作品, 標籤），以標籤找作品（合併標籤、標籤資料頁、移除標籤）要另一個方向的索引，否則每次掃全表。
+# 新資料庫由 create_all 建立，既有資料庫由 initialise_database 補建。
+Index("ix_resource_tags_tag_resource", resource_tags.c.tag_id, resource_tags.c.resource_id)
 
 
 class Resource(Base):
@@ -225,7 +228,7 @@ def _add_missing_columns() -> None:
 def initialise_database() -> None:
     Base.metadata.create_all(engine)
     _add_missing_columns()
-    for index in Resource.__table__.indexes:
+    for index in (*Resource.__table__.indexes, *resource_tags.indexes):  # create_all 不替既有資料表補索引
         try:
             index.create(engine, checkfirst=True)
         except DBAPIError:

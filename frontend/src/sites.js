@@ -3,3 +3,5 @@
 export const PROTECTED = /18comic|jmcomic|missav/i
 export const JM_SOURCE = '禁漫天堂'
 export const JM_SEARCH = 'https://18comic.vip/search/photos?search_query='
+// 畫面上統稱「有防護、要靠手機讀」的網站（背景進度列用）；移除網站時一起改
+export const PROTECTED_LABEL = '禁漫與 MissAV'

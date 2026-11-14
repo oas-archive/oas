@@ -3,6 +3,7 @@ from urllib.parse import parse_qs
 
 
 from . import search
+from .batching import id_in
 from .database import Collection, Resource, SessionLocal, Tag
 from .metadata import NON_WORK_KINDS
 
@@ -24,7 +25,7 @@ def resource_filters(
     filters = []
     if not search.parse(q).empty:  # 拆詞、寬鬆比對與同義詞見 search.py
         with SessionLocal() as db:
-            filters.append(Resource.id.in_(search.match_ids(db, q)))
+            filters.append(id_in(Resource.id, search.match_ids(db, q)))  # 搜到幾萬件也不會超過參數上限
     if status:
         filters.append(Resource.status == status)
     if source:

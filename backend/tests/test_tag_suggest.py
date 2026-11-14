@@ -77,6 +77,61 @@ def test_simplified_with_ambiguous_char_uses_existing_tag(client, pack):
     assert items(client)["短发"]["target"] == "短髮"
 
 
+def test_japanese_detection_and_conversion():
+    assert zhconv.looks_japanese("夜明観測チーム")  # 有假名
+    assert zhconv.looks_japanese("専任観測員")  # 専：日文才有的字（簡體是 专）
+    assert zhconv.looks_japanese("魔法騎士計画")  # 騎、計 是繁體寫法，画 在字表裡：簡體中文不會這樣混用
+    assert not zhconv.looks_japanese("观察日记") and zhconv.looks_simplified("观察日记")
+    assert not zhconv.looks_japanese("约翰・史密斯")  # 中文也用的間隔號不算假名
+    assert zhconv.looks_simplified("著名画家")  # 著 簡體中文也這樣寫
+    assert zhconv.japanese_to_traditional("専任魔法騎士計画") == "專任魔法騎士計畫"
+    assert zhconv.japanese_to_traditional("星々対決") == "星星對決"  # 々 重複前一個字
+    assert zhconv.japanese_to_traditional("畑仕事対策") is None  # 畑 沒有對應的繁體字：不轉一半
+    assert zhconv.japanese_to_traditional("予知対策") is None  # 予 意思不只一種
+    # 日文才有的字不能是簡體字，否則真正的簡體標籤會被當成日文
+    assert not zhconv.JAPANESE_ONLY & (set(zhconv._PAIRS[0][0]) | set(zhconv.AMBIGUOUS))
+
+
+def test_japanese_kanji_tag_is_converted_whole(client, pack):
+    make(client, "1", ["専任魔法騎士計画", "畑仕事対策", "絶対観測"])
+    make(client, "2", ["絕對觀測"])
+    found = items(client)
+    entry = found["専任魔法騎士計画"]
+    assert entry["target"] == "專任魔法騎士計畫" and entry["method"] == "s2t" and not entry["target_exists"]
+    assert "日文漢字" in entry["reason"] and "簡體" not in entry["reason"]
+    assert found["絶対観測"]["target"] == "絕對觀測" and found["絶対観測"]["confidence"] == "high"  # 轉完正好是現有標籤
+    assert "畑仕事対策" not in found  # 轉不完整：不建議「畑仕事對策」
+
+
+def test_kana_tag_needs_translation_source(client, pack):
+    pack.write_text(json.dumps({"translate": {"ふしぎ森": "奇妙森林"}, "suggest": {}, "block": []}, ensure_ascii=False), encoding="utf-8")
+    make(client, "1", ["夜明観測チーム", "ふしぎ 森", "観測"])
+    make(client, "2", ["觀測"])
+    found = items(client)
+    assert "夜明観測チーム" not in found  # 不建議「夜明觀測チーム」這種混合寫法
+    assert found["ふしぎ 森"]["target"] == "奇妙森林" and found["ふしぎ 森"]["method"] == "variant"  # 翻譯包有譯名就照常建議
+
+
+def test_named_categories_use_translation_only(client, pack):
+    categories = {"絶対観測": "parody", "専任騎士": "artist", "观测队长": "character", "夜明観測": "parody"}
+    make(client, "1", list(categories), categories)
+    make(client, "2", ["絕對觀測"])
+    with SessionLocal() as db:  # 有譯名（規則）的作品名照常建議
+        from app.database import TagAlias
+        db.add(TagAlias(alias="夜明観測", canonical="夜明觀測"))
+        db.commit()
+    found = items(client)
+    assert "専任騎士" not in found and "观测队长" not in found  # 沒有譯名：維持原文，不逐字轉
+    assert "絶対観測" not in found  # 作品名轉完正好是現有一般標籤也不併：名稱只比大小寫、空白、異體字
+    assert found["夜明観測"]["method"] == "rule" and found["夜明観測"]["target"] == "夜明觀測"
+
+
+def test_real_simplified_tag_unchanged(client, pack):
+    make(client, "1", ["观察日记"])
+    entry = items(client)["观察日记"]
+    assert entry["target"] == "觀察日記" and entry["method"] == "s2t" and entry["reason"].startswith("簡體字")
+
+
 def test_hint_needs_existing_target(client, pack):
     make(client, "1", ["強姦"])
     assert "強姦" not in items(client)  # 「強暴」還不存在：不建議
@@ -104,9 +159,9 @@ def test_rule_not_yet_applied_is_reported(client, pack):
 
 
 def test_together_for_english_tag_only_when_unique(client, pack):
-    for code in "123":
+    for code in "12345678":  # 一起出現至少 8 件才算（tag_suggest.often_together）
         make(client, code, ["hot spring", "溫泉", "單女主"])
-    for code in "456789":
+    for code in "abcdef":
         make(client, code, ["單女主"])
     entry = items(client)["hot spring"]
     assert entry["target"] == "溫泉" and entry["method"] == "together" and entry["confidence"] == "low"
