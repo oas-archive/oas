@@ -241,6 +241,11 @@ def page_image(url: str, page: str, kind: str = "") -> tuple[str, str]:
     return f"{parts.scheme}://{parts.netloc}/favicon.ico", "icon"
 
 
+def guess_format(tags: list[str]) -> str:
+    """漫畫種類只在來源標籤很明確時才猜：標籤裡有 anthology（選集）就是合集。其他一律不猜（單本、連載、單話看標籤分不出來）。"""
+    return "合集" if any(str(tag).strip().lower() == "anthology" for tag in tags) else ""
+
+
 def parse(url: str, page: str) -> dict:
     host = _host(_split(url).hostname or "")  # 鏡像網域（18comic.org、jmcomic1.me）用同一個解析規則
     data = PARSERS.get(host, parse_generic)(_defuse(page))
@@ -253,6 +258,10 @@ def parse(url: str, page: str) -> dict:
     }
     if categories:
         result["categories"] = categories
+    if isinstance(data.get("pages"), int) and 1 <= data["pages"] <= 100000:  # 解析得到才有這一項（影片、其他網站沒有）
+        result["pages"] = data["pages"]
+    if guess := guess_format(data.get("tags") or []):
+        result["format"] = guess
     if data.get("canonical"):
         result["canonical"] = _join(url, data["canonical"])
     if result["title"] and not result["image_url"]:
@@ -313,6 +322,7 @@ def describe(db: Session, url: str, fetch: bool = True, title: str = "", html_pa
     result = {
         "url": url, "source_name": source_name, "code": code, "title": "", "image_url": "", "tags": [],
         "duplicate": {"id": duplicate.id, "title": duplicate.title or duplicate.code} if duplicate else None,
+        "pages": None, "format": "",  # 讀作品頁解析得到才有值（頁數；漫畫種類只在標籤很明確時猜）
         "fetched": False, "blocked": False, "message": "", "similar": [],
         "tag_changes": [], "tag_dropped": [],  # 收錄預覽：哪些標籤依規則換了名稱、哪些被封鎖略過
         "tag_suggestions": [],  # 典藏還沒有、但可能就是某個現有標籤的新標籤（只提示，不自動改）

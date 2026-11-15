@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .. import alternatives, attention, batch_plan, cache, covers, intake, linkcheck, metadata, refresh, scheduler, settings, undo
+from .. import alternatives, attention, batch_plan, cache, covers, intake, jm_detect, linkcheck, metadata, refresh, scheduler, settings, undo
 from ..database import Resource, Source
 from ..deps import db_session
 from ..schemas import ImportInput, ImportPlanInput, ImportSearchInput, MetadataInput, PageInput, RetryInput
@@ -107,6 +107,15 @@ def attention_fetch_manual(db: Session = Depends(db_session)):
     return attention.fetch_manual(db)
 
 
+@router.post("/attention/jm-candidates")
+def attention_jm_candidates(payload: PageInput, db: Session = Depends(db_session)):
+    """失效的禁漫作品「找新編號」：手機讀回禁漫搜尋頁，解析並依標題相似度排出候選（不自動替換，換編號走 /resources/{id}/relink）。"""
+    try:
+        return jm_detect.candidates(db, payload.id, payload.html)
+    except LookupError as error:
+        raise HTTPException(404, str(error))
+
+
 @router.post("/attention/fill-page")
 def attention_fill_page(payload: PageInput, db: Session = Depends(db_session)):
     """手機 App 在隱藏的瀏覽器讀到某件作品的頁面（禁漫、MissAV 等伺服器讀不到的網站）：依網站規則解析後補上空白欄位、新增標籤。"""
@@ -159,6 +168,21 @@ def linkcheck_start():
 def linkcheck_stop():
     scheduler.cancel("linkcheck")
     return dict(linkcheck.state)
+
+
+@router.get("/linkcheck/jm/targets")
+def jm_targets(db: Session = Depends(db_session)):
+    """禁漫換編號偵測（手機背景讀取）：這一輪要讀的禁漫作品，最多 jm_detect.ROUND_LIMIT 件。伺服器不連外，只回清單。"""
+    return {"limit": jm_detect.ROUND_LIMIT, "targets": [{"id": rid, "url": url} for rid, url in jm_detect.targets(db)]}
+
+
+@router.post("/linkcheck/jm/result")
+def jm_result(payload: PageInput, db: Session = Depends(db_session)):
+    """手機讀回禁漫舊作品頁：作品不存在才標來源失效；防護驗證頁（challenge）不記任何東西，前端見到就停掉這一輪。"""
+    try:
+        return jm_detect.record(db, payload.id, payload.html)
+    except LookupError as error:
+        raise HTTPException(404, str(error))
 
 
 # ---------- 系統狀態 ----------

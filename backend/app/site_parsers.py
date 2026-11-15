@@ -16,9 +16,12 @@ def parse_nhentai(page: str) -> dict:
             break
     pairs = re.findall(r'href="/(parody|character|tag|artist|group|language|category)/[^"]+"[^>]*>.{0,1000}?<span class="name[^"]*">(?:<!--[^>]*-->)*([^<]+)</span>', page, re.S)
     categories = {html.unescape(name).strip(): namespace for namespace, name in pairs}
+    # 頁數：作品資訊的「Pages:」欄，數字在 class="name" 的 span 裡（或指向 pages:N 搜尋的連結）
+    pages = (re.search(r'Pages:\s*<span class="tags">\s*<a[^>]*>\s*<span class="name[^"]*">(?:<!--[^>]*-->)*(\d{1,6})</span>', page)
+             or re.search(r'href="/search/\?q=pages(?::|%3A)(\d{1,6})"', page))
     return {
         "title": alt if image else _meta(page, "og:title"), "image_url": image or _meta(page, "og:image"),
-        "tags": [name for _, name in pairs], "categories": categories,
+        "tags": [name for _, name in pairs], "categories": categories, "pages": int(pages.group(1)) if pages else None,
     }
 
 
@@ -33,7 +36,8 @@ def parse_wnacg(page: str) -> dict:
             break
         fallback = fallback or (re.search(r'src="(//[^"]*qy0\.ru/data/t/[^"]+)"', tag) or [None, ""])[1]
     image = re.sub(r"^/+", "https://", cover or fallback)
-    return {"title": title, "image_url": image, "tags": re.findall(r'class="tagshow"[^>]*>([^<]+)</a>', page)}
+    pages = re.search(r"頁數[：:]\s*(\d{1,6})\s*P", page, re.I)  # 作品資訊的「頁數：24P」
+    return {"title": title, "image_url": image, "tags": re.findall(r'class="tagshow"[^>]*>([^<]+)</a>', page), "pages": int(pages.group(1)) if pages else None}
 
 
 def parse_hanime1(page: str) -> dict:

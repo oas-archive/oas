@@ -15,7 +15,7 @@ from .batching import chunks
 from .database import Collection, Resource, Tag, TagAlias, TagBlock, UndoEntry, collection_items, resource_tags
 
 KEEP_MINUTES = 60
-FIELDS = ("code", "source_name", "title", "note", "image_url", "rating", "status", "image_kind", "link_dead", "kind", "progress")
+FIELDS = ("code", "source_name", "title", "note", "image_url", "rating", "status", "image_kind", "link_dead", "kind", "pages", "format", "progress")
 TIMES = ("created_at", "updated_at", "last_opened_at", "finished_at", "link_checked_at")
 
 
@@ -76,7 +76,7 @@ def _set_collections(db: Session, resource_id: int, collection_ids: list[int]) -
 
 
 def _values(snap: dict) -> dict:
-    return {**{key: snap[key] for key in FIELDS}, **{key: parse_datetime(snap[key]) for key in TIMES}}
+    return {**{key: snap.get(key, "" if key == "format" else None) if key in ("pages", "format") else snap[key] for key in FIELDS}, **{key: parse_datetime(snap[key]) for key in TIMES}}
 
 
 def _restore_deleted(db: Session, snap: dict) -> bool:
@@ -129,6 +129,10 @@ def apply(db: Session, entry_id: int) -> dict:
         if db.get(Resource, payload["keep"]["id"]) is not None:
             _overwrite(db, payload["keep"])
         restored = 1 + sum(_restore_deleted(db, snap) for snap in payload["removed"])
+    elif entry.kind == "restore":  # 改用新來源（relink）：整件作品（含標籤、書單）寫回改動前
+        if db.get(Resource, payload["resource"]["id"]) is not None:
+            _overwrite(db, payload["resource"])
+            restored = 1
     elif entry.kind == "fields":
         for row in payload["rows"]:
             values = {key: parse_datetime(value) if key in TIMES else value for key, value in row["values"].items()}

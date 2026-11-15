@@ -12,7 +12,7 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.orm.attributes import set_committed_value
 
 from . import covers, fetcher, metadata, preferences, scheduler
-from .archive import normalise_tags
+from .archive import FORMATS, normalise_tags
 from .database import Resource, SessionLocal, Source, Tag
 
 REQUEST_INTERVAL = fetcher.SLOW_INTERVAL  # 用來估計所需時間
@@ -61,7 +61,7 @@ def job_is_current(resource_id: int, url: str) -> bool:
 
 def apply(db, resource: Resource, data: dict) -> dict:
     """把讀到的資訊合併進作品，回傳變更統計。"""
-    changes = {"tags": 0, "cover": 0, "title": 0, "categorised": 0, "changed": False}
+    changes = {"tags": 0, "cover": 0, "title": 0, "categorised": 0, "pages": 0, "format": 0, "changed": False}
     values = {}
     if not resource.image_url and data.get("image_url"):
         values["image_url"] = data["image_url"][:2000]
@@ -70,6 +70,12 @@ def apply(db, resource: Resource, data: dict) -> dict:
     if not resource.title and data.get("title"):
         values["title"] = data["title"][:500]
         changes["title"] = 1
+    if resource.pages is None and isinstance(data.get("pages"), int) and 1 <= data["pages"] <= 100000:  # 手動填的頁數不蓋掉
+        values["pages"] = data["pages"]
+        changes["pages"] = 1
+    if not resource.format and resource.kind == "漫畫" and data.get("format") in FORMATS:  # 種類只替漫畫填，也只填空白的
+        values["format"] = data["format"]
+        changes["format"] = 1
     if values:  # 以直接更新保留原本的 updated_at（ORM 的 onupdate 會把它改成現在）
         db.execute(Resource.__table__.update().where(Resource.id == resource.id).values(**values, updated_at=resource.updated_at))
         for key, value in values.items():
@@ -89,7 +95,7 @@ def apply(db, resource: Resource, data: dict) -> dict:
         existing.add(name)
         changes["tags"] += 1
     changes["categorised"] = categorise(db, raw_categories)
-    changes["changed"] = bool(changes["tags"] or changes["cover"] or changes["title"] or changes["categorised"])
+    changes["changed"] = bool(changes["tags"] or changes["cover"] or changes["title"] or changes["categorised"] or changes["pages"] or changes["format"])
     return changes
 
 

@@ -92,7 +92,7 @@ export const announceItem = (id, values) => window.dispatchEvent(new CustomEvent
 export const announceRemoved = id => window.dispatchEvent(new CustomEvent('oas-item-removed', { detail: { id } }))
 export const STATES = ['未讀', '閱讀中', '已完食', '暫時擱置', '棄坑']
 export const PALETTES = ['#8c82ff', '#d17c9f', '#55abb2', '#d79a60', '#8f79bd', '#c96f6d']
-export const EMPTY = { code: '', source_name: '其他網站', title: '', note: '', image_url: '', rating: 0, status: '未讀', tags: [] }
+export const EMPTY = { code: '', source_name: '其他網站', title: '', note: '', image_url: '', rating: 0, status: '未讀', tags: [], pages: null, format: '' }
 
 // 資料服務連不上（還在啟動、剛被關閉）時通知畫面顯示橫幅；502–504 是開發模式的 Vite 轉發找不到資料服務。
 const reportOffline = () => window.dispatchEvent(new Event('oas-offline'))
@@ -118,7 +118,10 @@ export const shortTitle = item => item?.short_title || titleFor(item)
 const coverVersion = url => { let hash = 0; for (let index = 0; index < url.length; index++) hash = (hash * 31 + url.charCodeAt(index)) | 0; return (hash >>> 0).toString(36) }
 // 畫面不直接連外部網站（外部網址可能轉址回手機上的其他 App，帶走通行碼），還沒收錄的圖片也由後端抓；CSP 也只准本機圖片
 export const imageSrc = url => /^https?:/i.test(url || '') ? `/api/covers/preview?url=${encodeURIComponent(url)}` : url
-export const coverSrc = (item, width) => item?.id && item.image_url ? `/api/covers/${item.id}?v=${coverVersion(item.image_url)}${width ? `&w=${width}` : ''}` : imageSrc(item?.image_url)
+// 封面版本 epoch 來自 /api/preferences（preferences.js 啟動時讀一次）；清除全部封面時加 1，網址跟著換，瀏覽器就會重抓。沒清除時維持不變（沿用暫存）
+let coverEpoch = 0
+export const setCoverEpoch = value => { coverEpoch = Number(value) || 0 }
+export const coverSrc = (item, width) => item?.id && item.image_url ? `/api/covers/${item.id}?v=${coverVersion(item.image_url)}${coverEpoch ? `.${coverEpoch}` : ''}${width ? `&w=${width}` : ''}` : imageSrc(item?.image_url)
 // 環境光：直接寫入 CSS 變數，不經 React 狀態，避免懸停時整頁重新渲染；捲動中不切換，避免捲動時連續重繪。
 // 懸停只換背景光（.oas-ambient 自己的 --glow，漸變過去）；改 :root 的 --ambient 會讓整頁所有元素重算樣式，只在開啟作品、儲存時（force）才換。
 let lastScrollAt = 0
@@ -295,6 +298,7 @@ export const groupTags = (names, categories) => TAG_CATEGORIES
   .map(([key, label]) => ({ key, label, names: names.filter(name => (categories[name] || 'tag') === key) }))
   .filter(group => group.names.length)
 export const KINDS = ['漫畫', '動畫', '影片', '創作者', '網站', '其他']
+export const FORMATS = ['單本', '合集', '連載', '單話']  // 漫畫的種類（kind 是漫畫才有；空白＝未指定）
 
 // 沒有封面或封面只是頁面圖示時的顯示：創作者用圓形頭像、網站用置中圖示，都沒有時顯示依類型的佔位圖與網站名稱。
 const KIND_GLYPHS = { 漫畫: '❏', 動畫: '✦', 影片: '▶', 創作者: '◉', 其他: '⌂' }

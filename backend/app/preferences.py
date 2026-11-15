@@ -11,6 +11,7 @@ from . import settings
 from .database import SessionLocal, Setting
 
 KEY = "preferences"
+EPOCH_KEY = "cover_epoch"
 CHOICES = ("adult_confirmed", "save_covers", "background_reader")
 DESKTOP_CHOICES = ("adult_confirmed", "save_covers")
 
@@ -44,8 +45,22 @@ def _stored(db: Session) -> dict:
     return stored if isinstance(stored, dict) else {}
 
 
+def cover_epoch(db: Session) -> int:
+    """封面版本：清除全部封面時加 1。前端把它放進封面網址（?e=），瀏覽器暫存的舊封面就不會再用到。"""
+    row = db.get(Setting, EPOCH_KEY)
+    return int(row.value) if row and row.value.isdigit() else 0
+
+
+def bump_cover_epoch(db: Session) -> int:
+    row = db.get(Setting, EPOCH_KEY) or Setting(key=EPOCH_KEY)
+    row.value = str(cover_epoch(db) + 1)
+    db.add(row)
+    db.commit()
+    return int(row.value)
+
+
 def read(db: Session) -> dict:
-    base = {"edition": settings.EDITION, "platform": settings.PLATFORM, "questions": list(questions())}
+    base = {"edition": settings.EDITION, "platform": settings.PLATFORM, "questions": list(questions()), "cover_epoch": cover_epoch(db)}
     if not is_public():
         return {**base, "setup_done": True, "adult_confirmed": True, "save_covers": True, "background_reader": True}
     stored = _stored(db)

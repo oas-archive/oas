@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { canReadPages, readPage } from './pageReader.js'
-import { api, colourFor, coverRatio, coverSrc, Dropdown, EMPTY, groupTags, hideBroken, CoverFace, isFaceCover, isEditing, KINDS, loadTagCategories, Stars, STATUS_COLOURS, statusOptions, shortTitle, titleFor, TOUCH, ownsSideSwipe, whenIdle, ask, confirmLeave, useFocusTrap, imageSrc } from './shared.jsx'
+import { api, colourFor, coverRatio, coverSrc, Dropdown, EMPTY, FORMATS, groupTags, hideBroken, CoverFace, isFaceCover, isEditing, KINDS, loadTagCategories, Stars, STATUS_COLOURS, statusOptions, shortTitle, titleFor, TOUCH, ownsSideSwipe, whenIdle, ask, confirmLeave, useFocusTrap, imageSrc } from './shared.jsx'
 
 const formatDate = value => {
   if (!value) return ''
@@ -274,7 +274,7 @@ export default function Showcase({ item, link, prev, next, direction = 0, flipFr
 
       <section className="showcase-panel">
         {mode === 'view' ? <>
-          <p className="showcase-facts">{item.kind && <span>{item.kind}</span>}<span>{item.source_name}</span><span><i className="status-dot" style={{ background: STATUS_COLOURS[item.status] }} />{item.status}</span></p>
+          <p className="showcase-facts">{item.kind && <span>{item.kind}{item.kind === '漫畫' && item.format ? `・${item.format}` : ''}</span>}{item.pages ? <span>{item.pages} 頁</span> : null}<span>{item.source_name}</span><span><i className="status-dot" style={{ background: STATUS_COLOURS[item.status] }} />{item.status}</span></p>
           <h1 className="showcase-title">{shortTitle(item)}</h1>
           {shortTitle(item) !== titleFor(item) && <FullTitle key={item.id} title={titleFor(item)} />}
           <div className="showcase-rate">
@@ -384,7 +384,7 @@ function AlternativesPanel({ item, reveal, onQuick, onRelinked, onOpenOwned, onC
     if (!await ask(`${row.unconfirmed ? '注意：這個候選只確認到封面，作品可能已下架或是章節編號，請先點標題到網站確認。\n\n' : ''}改用「${row.source_name}」的這一件？
 ${row.title}
 
-原本的連結會記在筆記裡。`, { confirm: '改用這個' })) return
+原本的連結會記在筆記裡，一小時內可以復原。`, { confirm: '改用這個' })) return
     try { onRelinked(await api(`/resources/${item.id}/relink`, { method: 'POST', body: JSON.stringify({ source_name: row.source_name, code: row.code }) })) }
     catch (failure) { setError(failure.message) }
   }
@@ -427,6 +427,7 @@ const mergeRead = (values, base, info) => {
   return {
     ...values, title: fresh('title') ? info.title : values.title, image_url: fresh('image_url') && info.image_url ? info.image_url : values.image_url,
     tags: [...new Set([...values.tags, ...(info.tags || [])])], tag_categories: { ...values.tag_categories, ...(info.categories || {}) },
+    pages: values.pages || info.pages || null, format: values.format || info.format || '',
   }
 }
 
@@ -472,6 +473,8 @@ function EditForm({ item, link, dirtyRef, onCancel, onSave, onRemove, onPreview,
       if (!item.id && (!base || current.code === base.code)) { next.source_name = info.source_name; next.code = info.code }
       if (info.title && fresh('title')) next.title = info.title
       if (info.image_url && fresh('image_url')) next.image_url = info.image_url
+      if (info.pages && (current.pages == null || current.pages === '')) next.pages = info.pages  // 手動填的頁數不蓋掉
+      if (info.format && !current.format && (!current.kind || current.kind === '漫畫')) next.format = info.format  // 只在很明確時才有（例如標籤 anthology → 合集）
       if (info.tags?.length) {
         const existing = current.tags.split(/[,，]/).map(value => value.trim()).filter(Boolean)
         next.tags = [...new Set([...existing, ...info.tags])].join(', ')
@@ -514,9 +517,9 @@ function EditForm({ item, link, dirtyRef, onCancel, onSave, onRemove, onPreview,
     event.preventDefault()
     const pending = readingPage && !item.id ? reading.current : null
     // 讀作品頁得到的分類（作者、角色…）一起送出，存檔時標到還是一般標籤的那些上
-    const saved = await onSave({ ...form, rating: Number(form.rating), tags: form.tags.split(/[,，]/).map(value => value.trim()).filter(Boolean), tag_categories: { ...(form.tag_categories || {}), ...(lookup?.categories || {}) } })
+    const saved = await onSave({ ...form, pages: form.pages === '' || form.pages == null ? null : Number(form.pages), rating: Number(form.rating), tags: form.tags.split(/[,，]/).map(value => value.trim()).filter(Boolean), tag_categories: { ...(form.tag_categories || {}), ...(lookup?.categories || {}) } })
     // 作品頁還沒讀完就儲存：讀到後在背景補上剛存好那件的空白欄位
-    if (pending && saved?.id) onFillBlanks?.(saved.id, pending.then(info => info?.title ? { title: info.title, image_url: info.image_url || '', tags: info.tags || [], tag_categories: info.categories || {} } : null), false)
+    if (pending && saved?.id) onFillBlanks?.(saved.id, pending.then(info => info?.title ? { title: info.title, image_url: info.image_url || '', tags: info.tags || [], tag_categories: info.categories || {}, pages: info.pages || null, format: info.format || '' } : null), false)
   }
   const duplicate = lookup?.duplicate && lookup.duplicate.id !== item.id ? lookup.duplicate : null
   const formTags = form.tags.split(/[,，]/).map(value => value.trim()).filter(Boolean)
@@ -527,7 +530,7 @@ function EditForm({ item, link, dirtyRef, onCancel, onSave, onRemove, onPreview,
   // 分享或書籤帶來的作品已在典藏中（例如一次收錄、只有編號的作品）：先開啟它，這次的標題、封面、標籤在背景補進那一件的空白欄位
   // （作品頁還在讀就等讀完；伺服器只補空白的、標籤取聯集，不覆蓋已整理過的內容，見 /resources/{id}/fill-blanks），補完會提示
   const fillDuplicate = () => {
-    const values = { title: form.title.trim(), image_url: form.image_url.trim(), tags: formTags, tag_categories: { ...(form.tag_categories || {}), ...(lookup?.categories || {}) } }
+    const values = { title: form.title.trim(), image_url: form.image_url.trim(), tags: formTags, pages: form.pages === '' || form.pages == null ? null : Number(form.pages), format: form.format || '', tag_categories: { ...(form.tag_categories || {}), ...(lookup?.categories || {}) } }
     const base = { title: opened.current.title.trim(), image_url: opened.current.image_url.trim() }
     const hasValues = values.title || values.image_url || values.tags.length
     onFillBlanks(duplicate.id, readingPage ? reading.current.then(info => info?.title || hasValues ? mergeRead(values, base, info) : null) : Promise.resolve(values))
@@ -540,7 +543,7 @@ function EditForm({ item, link, dirtyRef, onCancel, onSave, onRemove, onPreview,
       {duplicate && <p className="fetch-note is-warn">這件已在典藏中：「{duplicate.title}」<button type="button" onClick={() => onOpenDuplicate(duplicate.id)}>開啟它</button>{canFill && <button type="button" onClick={fillDuplicate} disabled={busy}>補上它的空白欄位</button>}</p>}
       {!duplicate && lookup?.similar?.map(entry => <p key={entry.id} className="fetch-note is-warn">可能是同一本的另一個版本：「{entry.title}」（{entry.source_name}）<button type="button" onClick={() => onOpenDuplicate(entry.id)}>開啟它</button></p>)}
       {!item.id && onBulk && <p className="fetch-note"><button type="button" onClick={onBulk}>一次貼多個網址</button>收錄後在背景慢慢補資料</p>}
-      {lookup?.fetched && !duplicate && <p className="fetch-note is-ok">已帶入{lookup.title ? '標題、' : ''}{lookup.image_url ? '封面、' : ''}{lookup.tags?.length || 0} 個標籤（來源：{lookup.source_name}），請確認後儲存。</p>}
+      {lookup?.fetched && !duplicate && <p className="fetch-note is-ok">已帶入{lookup.title ? '標題、' : ''}{lookup.image_url ? '封面、' : ''}{lookup.pages ? '頁數、' : ''}{lookup.tags?.length || 0} 個標籤（來源：{lookup.source_name}），請確認後儲存。</p>}
       {lookup?.fetched && !duplicate && (lookup.tag_changes?.length > 0 || lookup.tag_dropped?.length > 0) && <p className="fetch-note rule-note">依你的標籤規則：{lookup.tag_changes?.map(change => `${change.from} → ${change.to}`).join('、')}{lookup.tag_changes?.length && lookup.tag_dropped?.length ? '；' : ''}{lookup.tag_dropped?.length ? `略過封鎖的 ${lookup.tag_dropped.join('、')}` : ''}</p>}
       {lookup?.fetched && !duplicate && tagHints.length > 0 && <p className="fetch-note suggest-note">可能就是現有的標籤：{tagHints.map(entry => <span key={entry.source}>{entry.source} → {entry.target}<button type="button" onClick={() => takeHint(entry)} title={entry.reason}>換成「{entry.target}」</button></span>)}</p>}
       {lookup?.message && <p className={`fetch-note${lookup.blocked ? ' is-warn' : ''}`}>{lookup.message}</p>}
@@ -551,6 +554,10 @@ function EditForm({ item, link, dirtyRef, onCancel, onSave, onRemove, onPreview,
       <label>來源<input name="source" autoComplete="off" value={form.source_name} onChange={event => set('source_name', event.target.value)} /></label>
     </div>
     <div className="field"><span>類型（留空則沿用來源的類型）</span><Dropdown ariaLabel="類型" value={form.kind || ''} onChange={value => set('kind', value)} options={[{ value: '', label: '沿用來源' }, ...KINDS.map(value => ({ value, label: value }))]} /></div>
+    <div className="form-split">
+      {(!form.kind || form.kind === '漫畫') && <div className="field"><span>漫畫種類</span><Dropdown ariaLabel="漫畫種類" value={form.format || ''} onChange={value => set('format', value)} options={[{ value: '', label: '不指定' }, ...FORMATS.map(value => ({ value, label: value }))]} /></div>}
+      <label>頁數（不知道就留空）<input name="pages" type="number" inputMode="numeric" min="1" max="100000" step="1" autoComplete="off" value={form.pages ?? ''} onChange={event => set('pages', event.target.value)} /></label>
+    </div>
     <label>封面網址<input name="cover-url" inputMode="url" autoCapitalize="none" autoCorrect="off" spellCheck={false} autoComplete="off" value={form.image_url} onChange={event => set('image_url', event.target.value)} /></label>
     <label>標籤（以逗號分隔）<input name="tags" autoComplete="off" autoCapitalize="none" value={form.tags} onChange={event => set('tags', event.target.value)} /></label>
     <div className="form-split">

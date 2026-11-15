@@ -49,6 +49,7 @@ class UserPack(BaseModel):
 
 
 StatusValue = Literal["未讀", "閱讀中", "已完食", "暫時擱置", "棄坑"]
+FormatValue = Literal["", "單本", "合集", "連載", "單話"]  # 漫畫的種類，空字串＝不指定
 
 # 標籤名稱與分類（作者、角色…）的長度上限：資料庫欄位是 100 字、分類 20 字，但 SQLite 不強制，
 # 已存在的長標籤編輯後原樣送回不能被擋，所以名稱給寬一點，與標題同為 500。
@@ -67,6 +68,8 @@ class ResourceInput(BaseModel):
     rating: float = Field(default=0, ge=0, le=5)
     status: StatusValue = "未讀"
     kind: str = Field(default="", max_length=20)
+    pages: int | None = Field(default=None, ge=1, le=100000)  # 頁數，None＝不知道
+    format: FormatValue = ""  # 漫畫的種類；不是漫畫的作品存檔時清成空白
     progress: str = Field(default="", max_length=40)
     # 編輯時送回作品現有的全部標籤（合併、多次補資料會累積），件數比照批次操作的 2000
     tags: list[TagName] = Items(min_length=0, max_length=2000, default=[])
@@ -78,6 +81,8 @@ class FillBlanksInput(BaseModel):
     """分享或書籤帶來的作品已在典藏中：這次讀到的資料，只補進那一件的空白欄位（見 resources.fill_blanks）。"""
     title: str = Field(default="", max_length=500)
     image_url: str = Field(default="", max_length=2000)
+    pages: int | None = Field(default=None, ge=1, le=100000)
+    format: FormatValue = ""
     # 表單上的標籤（分享帶來的最多 60 個、自己加的）與讀作品頁得到的（metadata.parse 最多 60 個）取聯集
     tags: list[TagName] = Items(min_length=0, max_length=300, default=[])
     tag_categories: dict[TagName, TagCategory] = {}

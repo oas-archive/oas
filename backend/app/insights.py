@@ -279,6 +279,10 @@ def merge_resources(db: Session, keep_id: int, ids: list[int]) -> Resource:
             keep.image_url, keep.image_kind = other.image_url, other.image_kind
         if not keep.title and other.title:
             keep.title = other.title
+        if keep.pages is None and other.pages is not None:
+            keep.pages = other.pages
+        if not keep.format and other.format:
+            keep.format = other.format
         if not keep.progress and other.progress:
             keep.progress = other.progress
         if other.note.strip():

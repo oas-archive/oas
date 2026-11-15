@@ -18,7 +18,7 @@ def valid_template(template: str) -> bool:
     template = template.strip()
     return template == "{}" or template.lower().startswith(("http://", "https://"))
 BACKUP_FORMAT = "oas-backup"
-BACKUP_VERSION = 5  # 2：類型、標籤分類、同義詞與封鎖清單；3：自訂書單；4：閱讀進度、完食時間、智慧書單；5：巡檢時間、標籤健檢的保留清單、不是重複的組合
+BACKUP_VERSION = 6  # 2：類型、標籤分類、同義詞與封鎖清單；3：自訂書單；4：閱讀進度、完食時間、智慧書單；5：巡檢時間、標籤健檢的保留清單、不是重複的組合；6：頁數、漫畫種類
 
 # 舊版曾使用的狀態字串，對應至目前的五種狀態。
 STATUS_ALIASES = {"未讀/未看": "未讀", "未看": "未讀", "已讀": "已完食", "已看": "已完食", "已讀/已看": "已完食"}
@@ -29,6 +29,24 @@ def normalise_status(value: str | None) -> str:
     if value in STATUSES:
         return value
     return STATUS_ALIASES.get(value, "未讀")
+
+
+FORMATS = ("單本", "合集", "連載", "單話")  # 漫畫的種類；空字串＝未指定
+MAX_PAGES = 100000
+
+
+def normalise_pages(value) -> int | None:
+    """備份與同步帶來的頁數：1～100000 的整數才收，其他（沒有這欄的舊備份、亂填的）當成不知道。"""
+    try:
+        pages = int(value)
+    except (TypeError, ValueError):
+        return None
+    return pages if 1 <= pages <= MAX_PAGES else None
+
+
+def normalise_format(value) -> str:
+    value = str(value or "").strip()
+    return value if value in FORMATS else ""
 
 
 def split_tags(raw: str | None) -> list[str]:
@@ -150,6 +168,7 @@ def serialise(resource: Resource) -> dict:
         "tags": sorted(tag.name for tag in resource.tags),
         "created_at": isoformat(resource.created_at), "updated_at": isoformat(resource.updated_at),
         "last_opened_at": isoformat(resource.last_opened_at),
+        "pages": resource.pages, "format": resource.format or "",
         "progress": resource.progress or "", "finished_at": isoformat(resource.finished_at),
     }
 
@@ -176,6 +195,18 @@ def _apply_link_check(db: Session, row, item: dict) -> int:
         values["link_dead"] = bool(item["link_dead"])
     db.execute(Resource.__table__.update().where(Resource.id == row.id).values(**values))
     return 1
+
+
+def _fill_pages_format(db: Session, row, item: dict) -> int:
+    """本機已有的作品：頁數、種類只在本機還是空白時用備份補上，不蓋掉本機的值。不動 updated_at。"""
+    values = {}
+    if row.pages is None and (pages := normalise_pages(item.get("pages"))) is not None:
+        values["pages"] = pages
+    if not row.format and row.kind == "漫畫" and (kind := normalise_format(item.get("format"))):  # 種類只有漫畫才有
+        values["format"] = kind
+    if values:
+        db.execute(Resource.__table__.update().where(Resource.id == row.id).values(**values, updated_at=row.updated_at))
+    return 1 if values else 0
 
 
 def export_backup(db: Session) -> dict:
@@ -259,7 +290,7 @@ def import_records(
             known_blocked.add(name)
     db.flush()
 
-    report = {"created": 0, "skipped": 0, "sources_created": 0, "link_checks_updated": 0, "keep_added": 0, "dismissals_added": 0, "dismissals_skipped": 0}
+    report = {"created": 0, "skipped": 0, "sources_created": 0, "link_checks_updated": 0, "fields_filled": 0, "keep_added": 0, "dismissals_added": 0, "dismissals_skipped": 0}
 
     known_sources = set(db.scalars(select(Source.name)).all())
     for source in sources:
@@ -271,7 +302,7 @@ def import_records(
         known_sources.add(name)
         report["sources_created"] += 1
 
-    existing = {(row.source_name, row.code): row for row in db.execute(select(Resource.id, Resource.source_name, Resource.code, Resource.link_checked_at, Resource.updated_at))}
+    existing = {(row.source_name, row.code): row for row in db.execute(select(Resource.id, Resource.source_name, Resource.code, Resource.link_checked_at, Resource.updated_at, Resource.pages, Resource.format, Resource.kind))}
     writer = TagWriter(db, tag_categories)  # 規則在上面已經寫好並 flush，之後不再變
     seen = set(existing)
     for item in resources:
@@ -281,6 +312,7 @@ def import_records(
             report["skipped"] += 1
             if (source_name, code) in existing:
                 report["link_checks_updated"] += _apply_link_check(db, existing[(source_name, code)], item)
+                report["fields_filled"] += _fill_pages_format(db, existing[(source_name, code)], item)
             continue
         seen.add((source_name, code))
         try:
@@ -298,6 +330,7 @@ def import_records(
             updated_at=parse_datetime(item.get("updated_at")) or created_at,
             last_opened_at=parse_datetime(item.get("last_opened_at")),
             kind=str(item.get("kind") or "")[:20],
+            pages=normalise_pages(item.get("pages")), format=normalise_format(item.get("format")) if str(item.get("kind") or "")[:20] == "漫畫" else "",  # 種類只有漫畫才有
             progress=str(item.get("progress") or "")[:40],
             finished_at=parse_datetime(item.get("finished_at")),
             image_kind=str(item.get("image_kind") or "")[:10],

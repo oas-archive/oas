@@ -56,7 +56,7 @@ def test_backup_round_trip_keeps_collections(client):
     shelf = client.post("/api/collections", json={"name": "最愛"}).json()
     client.post(f"/api/collections/{shelf['id']}/items", json={"ids": [b["id"]]})
     backup = client.get("/api/backup").json()
-    assert backup["version"] == 5 and backup["collections"] == [{"name": "最愛", "position": 1, "query": "", "items": [{"source_name": "站A", "code": "b"}]}]
+    assert backup["version"] == 6 and backup["collections"] == [{"name": "最愛", "position": 1, "query": "", "items": [{"source_name": "站A", "code": "b"}]}]
 
     assert client.post("/api/restore", params={"mode": "replace"}, content=json.dumps(backup)).status_code == 200
     lists = client.get("/api/collections").json()

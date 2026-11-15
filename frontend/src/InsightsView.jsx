@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Maintenance from './Maintenance.jsx'
-import { canReadPages, queueReads } from './pageReader.js'
+import { canReadPages, queueReads, readPage } from './pageReader.js'
 import { kickProgress, useProgress } from './progress.js'
 import { JM_SEARCH, JM_SOURCE } from './sites.js'
 import { announceRemoved, api, CATEGORY_NAMES, colourFor, CoverFace, coverSrc, Dropdown, hideBroken, isFaceCover, loadTagCategories, STATUS_COLOURS, TAG_CATEGORIES, shortTitle, titleFor, ask, errorNote, imageSrc } from './shared.jsx'
@@ -288,7 +288,7 @@ function TagSuggestions({ onApplied, notify }) {
 const ATTENTION_GROUPS = [
   ['retry', '自動補資料沒成功', '多半是當時被網站限流或連線不穩，按「全部重試」。紳士有些作品要登入才看得到，重試也補不到：按「前往來源」登入後打開，再分享給 OAS。'],
   ['manual', '要你手動補', '禁漫、MissAV 等有防護的網站，典藏館的伺服器讀不到。手機 App 按「試著讀取」會用內建的瀏覽器一件一件打開作品頁補上標題與標籤。禁漫的封面載不到，多半是作品換了編號：按「到禁漫搜尋」用標題找新編號，打開後分享給 OAS，再把舊的這件刪除或合併。按「前往來源」打開作品頁：手機在瀏覽器按「分享」選 OAS，電腦按「收錄到 OAS」書籤；出現「這件已在典藏中」時按「補上它的空白欄位」。'],
-  ['dead', '來源失效', '巡檢或補資料時來源網站回應「找不到」。常見原因是編號記到錯的網站（例如禁漫的編號被當成 N 網）：按「比對同編號」看 N 網、紳士、禁漫有沒有同一個編號，選對的那個改用；有標題的也可以打開作品按「來源失效？」用標題搜尋。'],
+  ['dead', '來源失效', '巡檢或補資料時來源網站回應「找不到」。常見原因是編號記到錯的網站（例如禁漫的編號被當成 N 網）：按「比對同編號」看 N 網、紳士、禁漫有沒有同一個編號，選對的那個改用；有標題的也可以打開作品按「來源失效？」用標題搜尋。禁漫換了編號時：手機 App 開著背景讀取會自動發現「作品已不存在」並列在這裡，按「找新編號」用標題搜尋，列出相似的候選，確認後才換（可以復原）。'],
 ]
 // 禁漫換了編號時（舊編號的作品頁不存在、封面也載不到），拿標題去禁漫搜尋新編號：去掉 [漢化組]、(場次) 等，多語標題只取第一段
 const jmQuery = title => title.replace(/\[[^\]]*\]|【[^】]*】|\([^)]*\)|（[^）]*）/g, ' ').split(/[/|｜]/)[0].replace(/\s+/g, ' ').trim().slice(0, 40)
@@ -326,6 +326,19 @@ function Attention({ onOpenItem, onChanged, notify }) {
       kickProgress()
       onChanged(); await reload()
     } catch (failure) { notify(errorNote(failure)) } finally { setBusy(false) }
+  }
+  // 禁漫「找新編號」（手機 App 背景讀取）：讀禁漫搜尋頁、伺服器依標題相似度排候選；讀不到（驗證頁、逾時）時只提示，不動任何資料
+  const [found, setFound] = useState({})  // { 作品 id: 'loading' | { status: ok／empty／blocked, candidates } }
+  const findNew = async item => {
+    const query = jmQuery(item.title)
+    if (!query) return
+    setFound(current => ({ ...current, [item.id]: 'loading' }))
+    const done = value => setFound(current => ({ ...current, [item.id]: value }))
+    try {
+      const page = await readPage(JM_SEARCH + encodeURIComponent(query))
+      if (!page) { done({ status: 'blocked', candidates: [] }); return }
+      done(await api('/attention/jm-candidates', { method: 'POST', body: JSON.stringify({ id: item.id, html: page }) }))
+    } catch (failure) { done(undefined); notify(errorNote(failure)) }
   }
   const matchAll = async () => {
     setMatches('loading')
@@ -366,11 +379,12 @@ function Attention({ onOpenItem, onChanged, notify }) {
   const openOwned = id => api(`/resources/${id}`).then(onOpenItem).catch(failure => notify(errorNote(failure)))
   const relink = async (item, row) => {
     if (!await ask(`${row.unconfirmed ? '注意：這個候選只確認到封面，作品可能已下架或是章節編號，請先點縮圖到網站確認。\n\n' : ''}「${titleFor(item)}」改用 ${row.source_name} ${row.code}？
-原本的連結會記在筆記裡。`, { confirm: '改用這個' })) return
+原本的連結會記在筆記裡，一小時內可以復原。`, { confirm: '改用這個' })) return
     setBusy(true)
     try {
       const moved = await api(`/resources/${item.id}/relink`, { method: 'POST', body: JSON.stringify({ source_name: row.source_name, code: row.code }) })
-      notify(`已改用 ${row.source_name} ${row.code}${moved.title ? '' : '；標題要到作品頁分享補上'}`)
+      notify(`已改用 ${row.source_name} ${row.code}${moved.title ? '' : '；標題要到作品頁分享補上'}`, moved.undo)
+      if (row.source_name === JM_SOURCE && canReadPages()) queueReads([{ id: item.id, url: row.url }])  // 禁漫伺服器讀不到：手機背景補上新作品的標籤
       onChanged(); await reload()
     } catch (failure) { notify(errorNote(failure)) } finally { setBusy(false) }
   }
@@ -400,11 +414,13 @@ function Attention({ onOpenItem, onChanged, notify }) {
           <p className="dup-code" title={item.code}>{item.code}</p>
           <div className="dup-actions">
             {(key === 'manual' || key === 'retry') && item.url && <a className={key === 'manual' ? 'primary' : 'ghost'} href={item.url} target="_blank" rel="noreferrer noopener">前往來源 ↗</a>}
-            {item.source_name === JM_SOURCE && item.title && item.missing.some(name => name.startsWith('封面')) && jmQuery(item.title) && <a className="ghost" href={JM_SEARCH + encodeURIComponent(jmQuery(item.title))} target="_blank" rel="noreferrer noopener" title="禁漫常會換編號：用標題找新的編號">到禁漫搜尋 ↗</a>}
+            {key === 'dead' && item.source_name === JM_SOURCE && item.title && jmQuery(item.title) && canReadPages() && <button type="button" className="primary" disabled={busy || found[item.id] === 'loading'} onClick={() => findNew(item)} title="手機用看不到的瀏覽器讀禁漫搜尋頁，依標題相似度列出候選，由你確認">{found[item.id] === 'loading' ? '搜尋中…' : '找新編號'}</button>}
+            {item.source_name === JM_SOURCE && item.title && (key === 'dead' || item.missing.some(name => name.startsWith('封面'))) && jmQuery(item.title) && <a className="ghost" href={JM_SEARCH + encodeURIComponent(jmQuery(item.title))} target="_blank" rel="noreferrer noopener" title="禁漫常會換編號：用標題找新的編號">到禁漫搜尋 ↗</a>}
             {key !== 'dead' && item.missing.includes('封面') && !COVER_KINDS.includes(item.kind) && <button type="button" className="ghost" disabled={busy} onClick={() => useSiteIcon(item)} title="文章、論壇、創作者頁沒有封面時，用網站圖示就好">用網站圖示</button>}
             <button type="button" className="ghost" onClick={() => onOpenItem(item)}>開啟</button>
             <button type="button" className="ghost subtle" disabled={busy} onClick={() => remove(item)}>刪除</button>
           </div>
+          {key === 'dead' && found[item.id] && found[item.id] !== 'loading' && <JmCandidates result={found[item.id]} busy={busy} onPick={row => relink(item, row)} onMerge={row => mergeInto(item, row)} onOpenOwned={openOwned} />}
           {key === 'dead' && matches && matches !== 'loading' && /^\d+$/.test(item.code.trim()) && <SameCode rows={matches.results[item.id] || []} errors={matches.errors[item.id] || []} busy={busy} onPick={row => relink(item, row)} onMerge={row => mergeInto(item, row)} onOpenOwned={openOwned} />}
         </div>
       </article>)}</div>
@@ -414,13 +430,20 @@ function Attention({ onOpenItem, onChanged, notify }) {
 
 // 比對同編號的候選：縮圖點開來源網站確認，按「改用」換成那個網站；已在典藏的可以合併過去。
 // 有網站查失敗（連線失敗、被限流）時另外列出，不說成「沒有這個編號」。
+// 禁漫「找新編號」的結果：沿用同編號候選的列（縮圖點開確認、改用、已在典藏的合併），多一個相似度；讀不到時保留手動搜尋的路
+function JmCandidates({ result, busy, onPick, onMerge, onOpenOwned }) {
+  if (result.status === 'blocked') return <p className="same-code is-empty is-warn" role="status">現在讀不到，請稍後或手動搜尋（按「到禁漫搜尋」）</p>
+  if (result.status === 'empty') return <p className="same-code is-empty" role="status">搜尋頁沒有相似的作品，請改用「到禁漫搜尋」手動找</p>
+  return <SameCode rows={result.candidates} errors={[]} busy={busy} onPick={onPick} onMerge={onMerge} onOpenOwned={onOpenOwned} />
+}
+
 function SameCode({ rows, errors, busy, onPick, onMerge, onOpenOwned }) {
   const failed = errors.length > 0 && <p className="same-code is-empty is-warn">{errors.join('；')}</p>
   if (!rows.length) return failed || <p className="same-code is-empty">N 網、紳士、禁漫都沒有這個編號</p>
   return <>
     <ul className="same-code">{rows.map(row => <li key={`${row.source_name}-${row.code}`}>
       <a href={row.url} target="_blank" rel="noreferrer noopener" title="在來源網站開啟確認"><i>{row.thumb && <img src={imageSrc(row.thumb)} alt="" loading="lazy" referrerPolicy="no-referrer" onError={hideBroken} />}</i></a>
-      <span><b>{row.source_name} {row.code}{row.unconfirmed ? '（未確認）' : ''}</b><small>{row.title}</small></span>
+      <span><b>{row.source_name} {row.code}{row.unconfirmed ? '（未確認）' : ''}</b><small>{row.title}</small>{row.similarity != null && <small className="same-code-sim">相似度 {Math.round(row.similarity * 100)}%</small>}</span>
       {row.owned_id
         ? <><button type="button" className="ghost" onClick={() => onOpenOwned(row.owned_id)}>開啟</button><button type="button" className="primary" disabled={busy} onClick={() => onMerge(row)}>合併到它</button></>
         : <button type="button" className={row.unconfirmed ? 'ghost' : 'primary'} disabled={busy} onClick={() => onPick(row)}>{row.unconfirmed ? '確認後改用' : '改用'}</button>}

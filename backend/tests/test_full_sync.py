@@ -1,6 +1,7 @@
 """備份 v5（巡檢時間、標籤健檢保留清單、不是重複的組合）與手機同步工具。資料皆為虛構。"""
 import json
 import os
+import socket
 import sqlite3
 import subprocess
 import sys
@@ -64,7 +65,7 @@ def test_export_v5_contents(client):
     client.post("/api/insights/tags/keep", json={"name": "冷門標籤"})
     client.post("/api/duplicates/dismiss", json={"ids": [one["id"], two["id"]]})
     data = backup(client)
-    assert data["version"] == 5
+    assert data["version"] == 6
     item = next(entry for entry in data["resources"] if entry["code"] == "1")
     assert item["link_checked_at"] == stamp(NOW.replace(tzinfo=None)) and "image_kind" in item and "link_dead" in item
     assert data["tag_health_keep"] == ["冷門標籤"]
@@ -188,12 +189,22 @@ def test_fingerprint_ignores_link_check_time(client):
 needs_tools = pytest.mark.skipif(not (TOOLS / "sync_from_phone.py").exists(), reason="tools/dev 不在這個版本")
 
 
-def run_tool(name, *args, data_dir):
+@pytest.fixture(autouse=True)
+def guard_port(monkeypatch):
+    """寫入前的「服務開著就拒絕」改探測一個沒人在聽的埠（綁住但不 listen），不受擁有者開著的 8080 影響。"""
+    with socket.socket() as reserved:
+        reserved.bind(("127.0.0.1", 0))
+        port = reserved.getsockname()[1]
+        monkeypatch.setenv("OAS_GUARD_PORT", str(port))
+        yield port
+
+
+def run_tool(name, *args, data_dir, expect=0):
     env = {key: value for key, value in os.environ.items() if key not in ("OAS_DATABASE_URL", "OAS_COVER_DIR")}
     env.update(OAS_DATA_DIR=str(data_dir), PYTHONIOENCODING="utf-8", PYTHONDONTWRITEBYTECODE="1")
     result = subprocess.run([sys.executable, str(TOOLS / name), *map(str, args)], cwd=BACKEND, env=env, capture_output=True, text=True, encoding="utf-8")
-    assert result.returncode == 0, result.stderr
-    return result.stdout
+    assert result.returncode == expect, result.stderr
+    return result.stdout + result.stderr
 
 
 def make_db(path):
@@ -275,6 +286,31 @@ def test_sync_tool_skips_fields_missing_from_old_backup(tmp_path):
     assert item.link_dead is True and item.image_kind == "icon" and utc(item.link_checked_at) == checked
     with Session(engine) as db:
         assert db.query(DuplicateDismissal).count() == 1 and db.query(Job).count() == 1
+
+
+@needs_tools
+@pytest.mark.parametrize("tool", ["sync_from_phone.py", "pull_phone_covers.py"])
+def test_tools_refuse_to_write_while_service_listens(tmp_path, monkeypatch, tool):
+    data_dir = tmp_path / "pc"
+    engine = make_db(data_dir / "oas.db")
+    with Session(engine) as db:
+        db.add(Resource(code="1", source_name="站A", link_dead=True))
+        db.commit()
+    engine.dispose()
+    before = (data_dir / "oas.db").read_bytes()
+    with socket.socket() as service:  # 假裝典藏館開著：一個真的在聽的本機埠
+        service.bind(("127.0.0.1", 0))
+        service.listen(1)
+        monkeypatch.setenv("OAS_GUARD_PORT", str(service.getsockname()[1]))
+        if tool == "sync_from_phone.py":
+            args = [phone_backup(tmp_path, [{"source_name": "站A", "code": "1", "title": "", "status": "未讀", "rating": 0, "link_dead": False}])]
+        else:
+            (tmp_path / "phone").mkdir()
+            args = [make_db(tmp_path / "phone" / "oas.db").url.database, tmp_path / "phone"]
+        output = run_tool(tool, *args, "--apply", data_dir=data_dir, expect=1)
+    assert "埠有服務開著" in output and "資料沒有動" in output
+    assert (data_dir / "oas.db").read_bytes() == before
+    assert not list(tmp_path.rglob("pc-before-*.db"))  # 連資料庫副本都還沒做
 
 
 COVER_FIELDS = dict(status="ok", content_type="image/jpeg")

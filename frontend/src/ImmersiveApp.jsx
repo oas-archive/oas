@@ -4,7 +4,7 @@ import CommandPalette from './CommandPalette.jsx'
 import { cancelPreview, HoverPreview, OfflineBanner, schedulePreview, SEARCH_TIPS, SearchBox, SkeletonGrid } from './Extras.jsx'
 import ImportDialog from './ImportDialog.jsx'
 import InsightsView, { INSIGHT_TABS, migrateKeptPairs, shownTab, tabPage } from './InsightsView.jsx'
-import { canReadPages, resumeReads } from './pageReader.js'
+import { canReadPages, resumeReads, scheduleJmCheck } from './pageReader.js'
 import { useProgressLine } from './progress.js'
 import { isPublic } from './preferences.js'
 import Showcase, { playShowcaseClose } from './Showcase.jsx'
@@ -95,6 +95,7 @@ export default function ImmersiveApp() {
   const [loadingMore, setLoadingMore] = useState(false)
   const [loadingList, setLoadingList] = useState(true)  // 換篩選時重新載入中：沒有卡片時顯示輪廓，有卡片時淡化
   const [kind, setKind] = useState(() => urlState.get('kind') || '')
+  const [format, setFormat] = useState(() => urlState.get('format') || '')  // 漫畫的種類（單本、合集…）
   const [sort, setSort] = useState(() => SORTS.some(option => option.value === urlState.get('sort')) ? urlState.get('sort') : 'updated')
   const [deadOnly, setDeadOnly] = useState(() => urlState.get('dead') === '1')
   const [didYouMean, setDidYouMean] = useState(null)  // 零結果時後端猜的拼字更正
@@ -127,7 +128,7 @@ export default function ImmersiveApp() {
     try { localStorage.setItem('oas-nav', next) } catch { /* 無法保存時只影響這次 */ }
   }
   const [batch, setBatch] = useState(null)  // 批次編輯：null 為一般模式，否則為已選作品 id 的 Set
-  const filterParams = `sort=${sort}${unratedOnly ? '&rated=false' : ''}${deadOnly ? '&dead=true' : ''}${activeCollection ? `&collection=${activeCollection.id}` : ''}${kind ? `&kind=${encodeURIComponent(kind)}` : ''}&q=${encodeURIComponent(query)}${state ? `&status=${encodeURIComponent(state)}` : ''}${source ? `&source=${encodeURIComponent(source)}` : ''}${selectedTags.map(tag => `&tags=${encodeURIComponent(tag)}`).join('')}${selectedTags.length > 1 ? `&tag_mode=${tagMode}` : ''}${excludedTags.map(tag => `&not_tags=${encodeURIComponent(tag)}`).join('')}`
+  const filterParams = `sort=${sort}${unratedOnly ? '&rated=false' : ''}${deadOnly ? '&dead=true' : ''}${activeCollection ? `&collection=${activeCollection.id}` : ''}${kind ? `&kind=${encodeURIComponent(kind)}` : ''}${format ? `&format=${encodeURIComponent(format)}` : ''}&q=${encodeURIComponent(query)}${state ? `&status=${encodeURIComponent(state)}` : ''}${source ? `&source=${encodeURIComponent(source)}` : ''}${selectedTags.map(tag => `&tags=${encodeURIComponent(tag)}`).join('')}${selectedTags.length > 1 ? `&tag_mode=${tagMode}` : ''}${excludedTags.map(tag => `&not_tags=${encodeURIComponent(tag)}`).join('')}`
   // 永遠用最新的篩選條件：load 也會從舊的事件處理函式呼叫（指令面板、復原、斷線重連）
   const filterRef = useRef(filterParams)
   filterRef.current = filterParams
@@ -154,7 +155,7 @@ export default function ImmersiveApp() {
   // 背景補資料、手機讀頁的進度（側欄底部、手機底部分頁列上方）；做完一種就重新載入，補到的標題與封面才看得到
   const progressLine = useProgressLine(() => load())
   // 上次還沒讀完的禁漫、MissAV（App 重新載入或被系統關掉）接著讀；背景讀取關閉時不讀
-  useEffect(() => { resumeReads() }, [])
+  useEffect(() => { resumeReads(); return scheduleJmCheck() }, [])
   const loadMore = async () => {
     const seq = loadSeq.current
     setLoadingMore(true)
@@ -384,7 +385,7 @@ export default function ImmersiveApp() {
     forgetShowcase()
     window.history.pushState({ oasPage: target, oasCreator: name || undefined }, '')
   }
-  const filterTags = (tags, mode = 'all', status = '') => { pushPage('gallery'); setActiveSmart(null); setActiveCollection(null); setDeadOnly(false); setUnratedOnly(false); setKind(''); setTagMode(mode); setExcludedTags([]); setSelected(null); setPage('gallery'); setState(status); setSource(''); setQuery(''); setSelectedTags(tags); window.scrollTo({ top: 0 }) }
+  const filterTags = (tags, mode = 'all', status = '') => { pushPage('gallery'); setActiveSmart(null); setActiveCollection(null); setDeadOnly(false); setUnratedOnly(false); setKind(''); setFormat(''); setTagMode(mode); setExcludedTags([]); setSelected(null); setPage('gallery'); setState(status); setSource(''); setQuery(''); setSelectedTags(tags); window.scrollTo({ top: 0 }) }
   const filterTag = tag => filterTags([tag])
   const openProfile = name => { pushPage('creator', name); setSelected(null); setCreator(name); setPage('creator'); window.scrollTo({ top: 0 }) }
   // 展示頁、統計頁的標籤：作者、社團、原作、角色開資料頁，其餘在書庫篩選
@@ -465,6 +466,7 @@ export default function ImmersiveApp() {
     if (state) params.set('status', state)
     if (source) params.set('source', source)
     if (kind) params.set('kind', kind)
+    if (format) params.set('format', format)
     selectedTags.forEach(tag => params.append('tag', tag))
     if (selectedTags.length > 1 && tagMode === 'any') params.set('match', 'any')
     excludedTags.forEach(tag => params.append('not_tag', tag))
@@ -478,7 +480,7 @@ export default function ImmersiveApp() {
     const next = params.toString()
     // 保留 history.state（返回鍵用的紀錄），只改網址
     if (next !== window.location.search.replace(/^\?/, '')) window.history.replaceState(window.history.state, '', next ? `?${next}` : window.location.pathname)
-  }, [page, query, state, source, kind, selectedTags, excludedTags, tagMode, sort, activeCollection, deadOnly, unratedOnly, tab, creator, selected?.id, filterOpen])  // filterOpen：關閉篩選面板走「返回」，網址會退回開啟前，要重新寫回目前的條件
+  }, [page, query, state, source, kind, format, selectedTags, excludedTags, tagMode, sort, activeCollection, deadOnly, unratedOnly, tab, creator, selected?.id, filterOpen])  // filterOpen：關閉篩選面板走「返回」，網址會退回開啟前，要重新寫回目前的條件
   // 網址帶 item 時（重新整理、書籤）直接開啟那件作品
   useEffect(() => { const id = Number(urlState.get('item')); if (id) openById(id) }, [])
   useEffect(() => { loadCollections() }, [])
@@ -492,6 +494,7 @@ export default function ImmersiveApp() {
     if (state) params.set('status', state)
     if (source) params.set('source', source)
     if (kind) params.set('kind', kind)
+    if (format) params.set('format', format)
     selectedTags.forEach(tag => params.append('tag', tag))
     if (selectedTags.length > 1 && tagMode === 'any') params.set('match', 'any')
     excludedTags.forEach(tag => params.append('not_tag', tag))
@@ -500,25 +503,26 @@ export default function ImmersiveApp() {
     if (sort !== 'updated') params.set('sort', sort)
     return params.toString()
   }
-  const hasFilters = Boolean(query || state || source || kind || selectedTags.length || excludedTags.length || deadOnly || unratedOnly)
-  const showDeepStrip = navVariant !== 'phone' && dashboard?.deep_dive && !query && !source && !kind && !selectedTags.length && !excludedTags.length && !deadOnly && !unratedOnly && !batch && !activeCollection && !activeSmart
-  const clearFilters = () => { setQuery(''); setState(''); setSource(''); setKind(''); setSelectedTags([]); setExcludedTags([]); setDeadOnly(false); setUnratedOnly(false) }
+  const hasFilters = Boolean(query || state || source || kind || format || selectedTags.length || excludedTags.length || deadOnly || unratedOnly)
+  const showDeepStrip = navVariant !== 'phone' && dashboard?.deep_dive && !query && !source && !kind && !format && !selectedTags.length && !excludedTags.length && !deadOnly && !unratedOnly && !batch && !activeCollection && !activeSmart
+  const clearFilters = () => { setQuery(''); setState(''); setSource(''); setKind(''); setFormat(''); setSelectedTags([]); setExcludedTags([]); setDeadOnly(false); setUnratedOnly(false) }
   // 已套用的條件：全部列在同一處，每一項都能直接移除
   const applied = [
     query && { key: 'q', label: `「${query}」`, remove: () => setQuery('') },
     unratedOnly ? { key: 'unrated', label: '待評分', remove: () => { setUnratedOnly(false); setState('') } } : state && { key: 'status', label: `狀態：${state}`, remove: () => setState('') },
     deadOnly && { key: 'dead', label: '來源失效', remove: () => setDeadOnly(false) },
     kind && { key: 'kind', label: `類型：${kind}`, remove: () => setKind('') },
+    format && { key: 'format', label: `種類：${format}`, remove: () => setFormat('') },
     source && { key: 'source', label: `來源：${source}`, remove: () => setSource('') },
     ...selectedTags.map(tag => ({ key: `tag-${tag}`, label: `#${tag}`, remove: () => toggleTag(tag) })),
     ...excludedTags.map(tag => ({ key: `not-${tag}`, label: `不要 #${tag}`, excluded: true, remove: () => setExcludedTags(current => current.filter(value => value !== tag)) })),
   ].filter(Boolean)
   const statusTabs = ['', ...STATES.filter(value => MAIN_STATES.includes(value) || value === state || dashboard?.status_counts?.[value])]
-  const filterCount = selectedTags.length + excludedTags.length + (kind ? 1 : 0) + (source ? 1 : 0)
+  const filterCount = selectedTags.length + excludedTags.length + (kind ? 1 : 0) + (format ? 1 : 0) + (source ? 1 : 0)
   const smartDirty = Boolean(activeSmart) && filterSearch() !== activeSmart.query
   const applySearch = search => {
     const params = new URLSearchParams(search)
-    setQuery(params.get('q') || ''); setState(params.get('status') || ''); setSource(params.get('source') || ''); setKind(params.get('kind') || '')
+    setQuery(params.get('q') || ''); setState(params.get('status') || ''); setSource(params.get('source') || ''); setKind(params.get('kind') || ''); setFormat(params.get('format') || '')
     setSelectedTags(params.getAll('tag')); setExcludedTags(params.getAll('not_tag')); setTagMode(params.get('match') === 'any' ? 'any' : 'all'); setDeadOnly(params.get('dead') === '1'); setUnratedOnly(params.get('rated') === '0')
     setSort(SORTS.some(option => option.value === params.get('sort')) ? params.get('sort') : 'updated')
   }
@@ -567,7 +571,7 @@ export default function ImmersiveApp() {
     } catch (error) { setMessage(errorNote(error)); return false }
   }
   const showList = kind => {
-    setActiveCollection(null); setActiveSmart(null); setDeadOnly(false); setSelectedTags([]); setExcludedTags([]); setQuery(''); setSource(''); setKind('')
+    setActiveCollection(null); setActiveSmart(null); setDeadOnly(false); setSelectedTags([]); setExcludedTags([]); setQuery(''); setSource(''); setKind(''); setFormat('')
     setUnratedOnly(kind === 'unrated'); setState(kind === 'reading' ? '閱讀中' : kind === 'unrated' ? '已完食' : ''); setSort('opened'); goTo('gallery')
   }
   const openCollection = collection => {
@@ -700,8 +704,8 @@ export default function ImmersiveApp() {
           </div>}
         </section>}
         {items.length === 0 && loadingList ? <SkeletonGrid columns={Math.max(1, Math.floor((viewport - (navVariant === 'full' ? 232 : navVariant === 'mini' ? 76 : 0) - 150) / ((DENSITIES.find(([value]) => value === density)?.[2] || 220) + 14)))} />
-          : items.length === 0 ? <EmptyResults query={query.trim()} didYouMean={didYouMean} hasFilters={hasFilters} otherFilters={Boolean(state || source || kind || selectedTags.length || excludedTags.length || deadOnly || unratedOnly)}
-            onSearch={setQuery} onClearOthers={() => { setState(''); setSource(''); setKind(''); setSelectedTags([]); setExcludedTags([]); setDeadOnly(false); setUnratedOnly(false) }} /> : null}
+          : items.length === 0 ? <EmptyResults query={query.trim()} didYouMean={didYouMean} hasFilters={hasFilters} otherFilters={Boolean(state || source || kind || format || selectedTags.length || excludedTags.length || deadOnly || unratedOnly)}
+            onSearch={setQuery} onClearOthers={() => { setState(''); setSource(''); setKind(''); setFormat(''); setSelectedTags([]); setExcludedTags([]); setDeadOnly(false); setUnratedOnly(false) }} /> : null}
         <Masonry minColumn={navVariant === 'phone' && density === 's' ? 140 : DENSITIES.find(([value]) => value === density)?.[2] || 220} className={`density-${density}${loadingList && items.length ? ' is-refreshing' : ''}`} items={items} renderItem={item => <Card key={item.id} item={item} onOpen={batch ? toggleBatch : openInGallery} onHover={hoverAmbient} onQuick={batch ? null : quick} picked={batch ? batch.has(item.id) : undefined} />} />
         {items.length < total && <div className="load-more"><button type="button" onClick={loadMore} disabled={loadingMore}>{loadingMore ? '載入中…' : `再載入 ${Math.min(PAGE_SIZE, total - items.length)} 件（尚有 ${total - items.length} 件）`}</button></div>}
       </>}
@@ -710,7 +714,7 @@ export default function ImmersiveApp() {
     {message && <div className={`oas-toast${message.undo ? ' has-undo' : ''}${message.error ? ' is-error' : ''}`} role={message.error ? 'alert' : 'status'}><span>{message.text}</span>
       {message.undo && <button type="button" className="toast-undo" onClick={() => { const id = message.undo; setMessage(''); undoAction(id) }}>復原<kbd>Ctrl Z</kbd></button>}
       <button type="button" className="toast-close" onClick={() => setMessage('')} aria-label="關閉提示">×</button></div>}
-    {selected && <Showcase key={selected.id ? 'item' : 'new'} item={selected} direction={direction} link={linkFor(selected, sourceList)} prev={prevNext.prev} next={prevNext.next} onNavigate={navigate} onClose={closeShowcase} onQuick={quick} onSave={save} onRemove={remove} onTag={openTag} onVisit={visit} onBulk={async () => { if (formDirty.current && !await confirmLeave()) return; formDirty.current = false; closeShowcase(); setPanel('import') }} dirtyRef={formDirty} onOpenDuplicate={openDuplicate} onFillBlanks={fillBlanks} flipFrom={flipFrom} coverHint={coverHint} collections={collections.filter(collection => !collection.query)} onMembership={changeMembership} onCreateCollection={createCollection} onRelinked={saved => { setSelected(saved); load(); setMessage(saved.added_tags ? `已改用 ${saved.source_name}，補上 ${saved.added_tags} 個標籤` : `已改用 ${saved.source_name}`) }} />}
+    {selected && <Showcase key={selected.id ? 'item' : 'new'} item={selected} direction={direction} link={linkFor(selected, sourceList)} prev={prevNext.prev} next={prevNext.next} onNavigate={navigate} onClose={closeShowcase} onQuick={quick} onSave={save} onRemove={remove} onTag={openTag} onVisit={visit} onBulk={async () => { if (formDirty.current && !await confirmLeave()) return; formDirty.current = false; closeShowcase(); setPanel('import') }} dirtyRef={formDirty} onOpenDuplicate={openDuplicate} onFillBlanks={fillBlanks} flipFrom={flipFrom} coverHint={coverHint} collections={collections.filter(collection => !collection.query)} onMembership={changeMembership} onCreateCollection={createCollection} onRelinked={saved => { setSelected(saved); load(); setMessage(saved.added_tags ? `已改用 ${saved.source_name}，補上 ${saved.added_tags} 個標籤` : `已改用 ${saved.source_name}`, saved.undo) }} />}
     {warmItem && !selected && <div className="showcase-warm" aria-hidden="true" inert=""><Showcase warm key="warm" item={warmItem} onClose={() => {}} onQuick={() => Promise.resolve()} /></div>}
     <AskHost />
     {panel === 'backup' && <BackupCenter close={() => setPanel(null)} notify={setMessage} reload={() => { load(); loadCollections(); loadTagCategories(true); setDataVersion(value => value + 1); api('/sources').then(setSourceList).catch(() => {}) }} />}
@@ -723,8 +727,8 @@ export default function ImmersiveApp() {
     {navVariant === 'phone' && <ProgressStrip line={progressLine} variant="phone" onOpen={openAttention} />}
     {navVariant === 'phone' && <BottomTabs page={page} goTo={goTo} tidyCounts={tidyCounts} />}
     {returning && <ReturnPrompt key={returning.id} item={returning} onQuick={(item, patch) => quick(item, patch).then(saved => { bumpSidebar(); return saved })} onOpen={() => { const item = returning; setReturning(null); if (selected?.id !== item.id) open(item) }} onClose={() => setReturning(null)} />}
-    {filterOpen && <FilterSheet included={selectedTags} excluded={excludedTags} mode={tagMode} kind={kind} source={source} sources={sources} total={total} loading={loadingList} filterParams={filterParams} drafting={smartDraft} canSave={hasFilters}
-      onIncluded={setSelectedTags} onExcluded={setExcludedTags} onMode={setTagMode} onKind={setKind} onSource={setSource} onClearAll={() => { setKind(''); setSource(''); setSelectedTags([]); setExcludedTags([]) }} onSave={() => setSmartDialog('new')} onClose={() => { setFilterOpen(false); setSmartDraft(false) }} />}
+    {filterOpen && <FilterSheet included={selectedTags} excluded={excludedTags} mode={tagMode} kind={kind} format={format} source={source} sources={sources} total={total} loading={loadingList} filterParams={filterParams} drafting={smartDraft} canSave={hasFilters}
+      onIncluded={setSelectedTags} onExcluded={setExcludedTags} onMode={setTagMode} onKind={value => { setKind(value); if (value && value !== '漫畫') setFormat('') }} onFormat={setFormat} onSource={setSource} onClearAll={() => { setKind(''); setFormat(''); setSource(''); setSelectedTags([]); setExcludedTags([]) }} onSave={() => setSmartDialog('new')} onClose={() => { setFilterOpen(false); setSmartDraft(false) }} />}
     {smartDialog === 'new' && <SmartDialog title="存成智慧書單" initial={smartName()} applied={applied} total={total} submit="儲存" onSubmit={saveSmart} onClose={() => setSmartDialog(null)} />}
     {smartDialog === 'rename' && (activeSmart || activeCollection) && <SmartDialog title={activeSmart ? '替智慧書單改名' : '替書單改名'} initial={(activeSmart || activeCollection).name} submit="儲存" onSubmit={renameSmart} onClose={() => setSmartDialog(null)} />}
     {smartDialog === 'choose' && <ListTypeDialog onManual={() => setSmartDialog('manual')} onSmart={() => { setSmartDialog(null); newSmart() }} onClose={() => setSmartDialog(null)} />}
@@ -957,7 +961,8 @@ function HomeView({ onOpen, onHover, onQuick, onTag, onShowList, onCollection, c
     return data.rows.map(row => <section key={row.key} className="shelf">
           <header><h3>{row.title}</h3>{row.subtitle && <p>{row.subtitle}</p>}
             {more(row) && <button type="button" className="shelf-more" onClick={more(row)}>看全部</button>}</header>
-          <ShelfRow items={row.items} render={item => <Card key={item.id} item={item} onOpen={onOpen} list={row.items} onHover={onHover} onQuick={quickLocal} />} />
+          {/* key 跟著這批內容的 seed：換一批拿到新內容時整排重掛，橫向位置與小圓點自然回到第一本（不用 key 的話，瀏覽器的捲動貼齊會跟著被搬動的同一張卡片，書架停在舊位置）；背景重抓同一個 seed 不變，不會把正在滑的書架拉回去 */}
+          <ShelfRow key={data.seed} items={row.items} render={item => <Card key={item.id} item={item} onOpen={onOpen} list={row.items} onHover={onHover} onQuick={quickLocal} />} />
         </section>)
   }, [data, collections, quickLocal])
   if (!data) return <SkeletonGrid columns={4} count={8} />

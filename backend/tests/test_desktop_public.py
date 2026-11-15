@@ -95,7 +95,7 @@ def test_desktop_public_asks_two_questions(client, edition):
     edition("public", "desktop")
     first = client.get("/api/preferences").json()
     assert first == {
-        "edition": "public", "platform": "desktop", "questions": ["adult_confirmed", "save_covers"],
+        "edition": "public", "platform": "desktop", "questions": ["adult_confirmed", "save_covers"], "cover_epoch": 0,
         "setup_done": False, "adult_confirmed": None, "save_covers": None, "background_reader": False,
     }
     assert client.patch("/api/preferences", json={"save_covers": False}).json()["setup_done"] is False
@@ -140,7 +140,7 @@ def test_personal_editions_unchanged(client, edition, platform):
     edition("personal", platform)
     result = client.get("/api/preferences").json()
     assert result == {
-        "edition": "personal", "platform": platform, "questions": [],
+        "edition": "personal", "platform": platform, "questions": [], "cover_epoch": 0,
         "setup_done": True, "adult_confirmed": True, "save_covers": True, "background_reader": True,
     }
     assert client.patch("/api/preferences", json={"save_covers": False}).status_code == 403
@@ -207,7 +207,7 @@ def test_desktop_public_clear_after_choosing_not_to_save(client, edition):
     assert len(list(folder.iterdir())) == 3  # 還在存封面時不會刪
     client.patch("/api/preferences", json={"save_covers": False})
     response = client.post("/api/covers/clear")
-    assert response.json() == {"removed": 3, "covers": 2}
+    assert response.json() == {"removed": 3, "covers": 2, "cover_epoch": 1}
     assert response.headers["clear-site-data"] == '"cache"'
     assert list(folder.iterdir()) == []
     assert client.get("/api/covers/stored").json() == {"covers": 0, "files": 0, "bytes": 0}
@@ -265,3 +265,20 @@ def test_desktop_public_saves_nothing_before_choosing(client, edition):
     assert preferences.saving_covers() is False
     client.patch("/api/preferences", json={"adult_confirmed": True, "save_covers": True})
     assert preferences.saving_covers() is True
+
+
+def test_clear_bumps_the_cover_epoch_each_time_and_preferences_report_it(client, edition):
+    """清除全部封面後版本加 1（前端放進封面網址，瀏覽器暫存的舊封面作廢）；沒清除時版本不變、網址穩定。"""
+    edition("public", "desktop")
+    assert client.get("/api/preferences").json()["cover_epoch"] == 0
+    client.patch("/api/preferences", json={"adult_confirmed": True, "save_covers": False})
+    assert client.get("/api/preferences").json()["cover_epoch"] == 0
+    assert client.post("/api/covers/clear").json()["cover_epoch"] == 1
+    assert client.get("/api/preferences").json()["cover_epoch"] == 1
+    assert client.post("/api/covers/clear").json()["cover_epoch"] == 2
+    assert client.get("/api/preferences").json()["cover_epoch"] == 2
+
+
+def test_personal_edition_reports_cover_epoch_too(client, edition):
+    edition("personal", "desktop")
+    assert client.get("/api/preferences").json()["cover_epoch"] == 0

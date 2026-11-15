@@ -151,10 +151,11 @@ def clear_covers(response: Response, db: Session = Depends(db_session)):
         raise HTTPException(409, f"要先設定不把封面存到{preferences.device_name()}")
     stored = covers.stored_summary(db)["covers"]
     removed = covers.clear_all(db)
+    epoch = preferences.bump_cover_epoch(db)  # 封面網址換版本，瀏覽器暫存的舊封面不再被用到（Clear-Site-Data 實測清不掉）
     if not preferences.is_android():
         # 電腦的瀏覽器會暫存看過的封面（手機由 App 外殼清 WebView 暫存）；請瀏覽器清掉這個網站的暫存
         response.headers["Clear-Site-Data"] = '"cache"'
-    return {"removed": removed, "covers": stored}
+    return {"removed": removed, "covers": stored, "cover_epoch": epoch}
 
 
 @router.post("/covers/cache", status_code=202)

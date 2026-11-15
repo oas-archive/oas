@@ -129,6 +129,7 @@ def local_server():
     threading.Thread(target=server.serve_forever, daemon=True).start()
     yield server.server_address[1]
     server.shutdown()
+    server.server_close()  # 關掉監聽的 socket，否則 pytest 會報 ResourceWarning
 
 
 def test_connection_to_internal_address_is_aborted(local_server):

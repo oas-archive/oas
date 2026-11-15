@@ -20,6 +20,7 @@ def resource_filters(
     q: str = "", status: str | None = None, source: str | None = None, tags: list[str] | None = None, tag_mode: str = "all",
     kind: str | None = None, dead: bool | None = None, collection: int | None = None, opened: bool | None = None,
     rated: bool | None = None, not_status: str | None = None, works: bool = False, not_tags: list[str] | None = None,
+    format: str | None = None,
 ) -> list:
     """典藏館的篩選條件；tags 可多選，tag_mode=all 需全部符合、any 符合任一即可；not_tags 是要排除的標籤。"""
     filters = []
@@ -32,6 +33,9 @@ def resource_filters(
         filters.append(Resource.source_name == source)
     if kind:
         filters.append(Resource.kind == kind)
+    if format:  # 漫畫的種類（單本、合集…）；只有漫畫有種類
+        filters.append(Resource.kind == "漫畫")
+        filters.append(Resource.format == format)
     if works:  # 只要作品：不含網站頁面、創作者頁
         filters.append(Resource.kind.not_in(NON_WORK_KINDS))
     if dead is not None:
@@ -62,5 +66,5 @@ def smart_filters(query: str) -> list:
     return resource_filters(
         first("q") or "", first("status"), first("source"), params.get("tag", []), "any" if first("match") == "any" else "all",
         first("kind"), True if first("dead") == "1" else None,
-        opened=True if first("opened") == "1" else None, rated=False if first("rated") == "0" else None, not_status=first("not_status"), not_tags=params.get("not_tag", []),
+        opened=True if first("opened") == "1" else None, rated=False if first("rated") == "0" else None, not_status=first("not_status"), not_tags=params.get("not_tag", []), format=first("format"),
     )

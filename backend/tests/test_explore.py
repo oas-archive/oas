@@ -1,3 +1,4 @@
+import time
 from datetime import datetime, timezone
 
 from sqlalchemy import select
@@ -97,6 +98,7 @@ def test_home_hero_prefers_recently_opened_reading(client):
     first = make(client, "r1", ["奇幻"], status="閱讀中")
     make(client, "r2", ["奇幻"], status="閱讀中")
     make(client, "u1", ["料理"])
+    time.sleep(0.05)  # Windows 時鐘約 15 毫秒一格：不等的話「打開時間」可能和 r2 的更新時間相同，排序變成比編號
     client.post(f"/api/resources/{first['id']}/open")
     result = home(client)
     assert [item["code"] for item in result["hero"]] == ["r1", "r2"]

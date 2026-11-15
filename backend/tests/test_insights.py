@@ -222,7 +222,7 @@ def test_backup_keeps_progress_and_smart_lists(client):
     add(client, "a", status="閱讀中", progress="p.45")
     client.post("/api/collections", json={"name": "智慧", "query": "status=閱讀中"})
     backup = client.get("/api/backup").json()
-    assert backup["version"] == 5
+    assert backup["version"] == 6
     assert client.post("/api/restore?mode=replace", json=backup).status_code == 200
     assert client.get("/api/resources").json()["items"][0]["progress"] == "p.45"
     assert client.get("/api/collections").json()[0]["query"] == "status=閱讀中"

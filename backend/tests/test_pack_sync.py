@@ -138,3 +138,14 @@ def test_entry_removed_from_pack_keeps_its_synonym(client, tmp_path):
         pack.write_text('{"translate": {}}', encoding="utf-8")
         defaults.sync_packs(db, [pack])
         assert db.get(TagAlias, "old name").canonical == "譯名"
+
+
+def test_builtin_pack_translates_leftover_english_tags(client):
+    """2026-11-14 收尾：公開翻譯包把剩下的英文一般標籤併到台灣用語（作品資料皆虛構）。"""
+    work = add(client, "9001", ["Closed Eyes", "Lizard Girl", "AV DEBUT", "自訂"])
+    counts = sync([defaults.TAG_PACKS[0]])
+    assert counts["aliases"] > 0 and counts["merged"] >= 3
+    aliases = rules()[0]
+    assert aliases["closed eyes"] == "閉眼" and aliases["lizard girl"] == "蜥蜴娘" and aliases["av debut"] == "出道作"
+    assert tags_of(client, work["id"]) == ["出道作", "自訂", "蜥蜴娘", "閉眼"]
+    assert add(client, "9002", ["Variant Set"])["tags"] == ["差分集"]

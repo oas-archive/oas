@@ -21,7 +21,55 @@ if DATABASE_URL.startswith("sqlite"):
     def _sqlite_pragmas(dbapi_connection, _record):
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA foreign_keys=ON")
+        if DATABASE_URL != "sqlite:///:memory:":
+            # WAL：讀寫不互相擋（背景作業寫入時畫面照樣讀）。代價：最近的寫入可能還在 oas.db-wal，
+            # 複製資料庫一律用 snapshot_database()（或連 -wal、-shm 一起複製），不要只複製 oas.db。
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA synchronous=NORMAL")  # WAL 下的建議值：斷電最多丟掉最後幾筆，不會壞檔
         cursor.close()
+
+
+SCHEMA_VERSION = 1  # 結構版本，記在 PRAGMA user_version；只記錄目前補到哪一版，升級仍由 _add_missing_columns 與索引補建負責
+
+
+def snapshot_database(target: Path | str) -> None:
+    """用 SQLite 的 backup API 把目前資料庫（含還在 -wal 裡的寫入）存成單一完整檔；target 已存在會被覆蓋。
+
+    不要用 shutil.copy 複製開著的 oas.db：開 WAL 後新資料可能還在 oas.db-wal。
+    給工具與之後的備份功能用；目前 App 備份走 JSON（archive.export_backup），這個函式只有測試在用，不要刪。
+    """
+    import sqlite3
+
+    target = Path(target)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.unlink(missing_ok=True)
+    for suffix in ("-wal", "-shm"):
+        Path(f"{target}{suffix}").unlink(missing_ok=True)
+    raw = engine.raw_connection()
+    try:
+        destination = sqlite3.connect(target)
+        try:
+            raw.driver_connection.backup(destination)
+        finally:
+            destination.close()
+    finally:
+        raw.close()
+
+
+def replace_database_file(source: Path | str, destination: Path | str | None = None) -> None:
+    """用 source（單一完整的 .db）換掉資料庫檔案：先關掉所有連線，並清掉舊的 -wal、-shm，避免舊日誌套到新檔上。
+
+    給工具與之後的備份功能用；目前 App 備份走 JSON，只有測試在用，不要刪。
+    """
+    destination = Path(destination) if destination else Path(DATABASE_URL.removeprefix("sqlite:///"))
+    engine.dispose()
+    for suffix in ("-wal", "-shm"):
+        Path(f"{destination}{suffix}").unlink(missing_ok=True)
+    temporary = destination.with_name(destination.name + ".restoring")
+    import shutil
+
+    shutil.copyfile(source, temporary)
+    temporary.replace(destination)
 
 
 def utcnow() -> datetime:
@@ -60,6 +108,8 @@ class Resource(Base):
     image_kind: Mapped[str] = mapped_column(String(10), nullable=False, default="")
     link_dead: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)  # 來源頁面已失效（作品被下架等）  # ""＝封面／avatar＝創作者頭像／icon＝網站圖示
     kind: Mapped[str] = mapped_column(String(20), nullable=False, default="")  # 漫畫／影片／動畫／創作者／其他；空白時沿用來源的類型
+    pages: Mapped[int | None] = mapped_column(Integer)  # 頁數；NULL＝不知道
+    format: Mapped[str] = mapped_column(String(20), nullable=False, default="")  # 漫畫的種類：單本／合集／連載／單話；空白＝未指定
     progress: Mapped[str] = mapped_column(String(40), nullable=False, default="")  # 閱讀進度，例如「第 3 話」「p.45」
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # 最近一次標記為「已完食」的時間
     link_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # 定期巡檢最後檢查來源的時間
@@ -209,7 +259,8 @@ def _add_missing_columns() -> None:
     additions = {
         "cover_cache": {"ratio": "REAL", "colour": "VARCHAR(7)", "fingerprint": "VARCHAR(16)"},
         "resources": {"kind": "VARCHAR(20) NOT NULL DEFAULT ''", "image_kind": "VARCHAR(10) NOT NULL DEFAULT ''", "link_dead": "BOOLEAN NOT NULL DEFAULT 0",
-                      "progress": "VARCHAR(40) NOT NULL DEFAULT ''", "finished_at": "DATETIME", "link_checked_at": "DATETIME"},
+                      "progress": "VARCHAR(40) NOT NULL DEFAULT ''", "finished_at": "DATETIME", "link_checked_at": "DATETIME",
+                      "pages": "INTEGER", "format": "VARCHAR(20) NOT NULL DEFAULT ''"},
         "collections": {"query": "TEXT NOT NULL DEFAULT ''"},
         "sources": {"kind": "VARCHAR(20) NOT NULL DEFAULT ''"},
         "tags": {"category": "VARCHAR(20) NOT NULL DEFAULT 'tag'"},
@@ -234,3 +285,9 @@ def initialise_database() -> None:
         except DBAPIError:
             # 既有資料若已含重複「來源 + 代碼」，略過建立唯一索引；API 層仍會檢查重複。
             pass
+    if DATABASE_URL.startswith("sqlite"):
+        from sqlalchemy import text
+
+        with engine.begin() as connection:
+            if connection.execute(text("PRAGMA user_version")).scalar() < SCHEMA_VERSION:  # 較新的程式建的資料庫（版本更高）不降版
+                connection.execute(text(f"PRAGMA user_version = {SCHEMA_VERSION}"))

@@ -289,6 +289,7 @@ def slow_site(monkeypatch):
         urllib.request.ProxyHandler({}), covers._CheckedRedirect, covers._CheckedHTTPHandler, covers._CheckedHTTPSHandler))
     yield f"http://127.0.0.1:{server.server_address[1]}", hits
     server.shutdown()
+    server.server_close()  # 關掉監聽的 socket，否則 pytest 會報 ResourceWarning
 
 
 def test_slow_response_headers_are_cut_off_within_total_time(slow_site):

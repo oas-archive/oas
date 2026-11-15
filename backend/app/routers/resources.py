@@ -49,7 +49,7 @@ def commit_or_conflict(db: Session) -> None:
 def list_resources(
     q: str = "", status: str | None = None, source: str | None = None,
     tag: str | None = None, tags: list[str] = Query(default=[]), tag_mode: Literal["all", "any"] = "all",
-    kind: str | None = None, dead: bool | None = None, collection: int | None = None, opened: bool | None = None,
+    kind: str | None = None, format: str | None = None, dead: bool | None = None, collection: int | None = None, opened: bool | None = None,
     rated: bool | None = None, not_status: str | None = None, works: bool = False, not_tags: list[str] = Query(default=[]), sort: Literal["relevance", "updated", "created", "rating", "title", "opened"] = "updated",
     limit: int = Query(default=60, ge=1, le=5000), offset: int = Query(default=0, ge=0),
     db: Session = Depends(db_session),
@@ -62,7 +62,7 @@ def list_resources(
         "title": (Resource.title.asc(), Resource.id.asc()),
         "opened": (Resource.last_opened_at.is_(None), Resource.last_opened_at.desc(), Resource.updated_at.desc()),
     }[sort]
-    filters = resource_filters(q, status, source, [*tags, *([tag] if tag else [])], tag_mode, kind, dead, collection, opened, rated, not_status, works, not_tags)
+    filters = resource_filters(q, status, source, [*tags, *([tag] if tag else [])], tag_mode, kind, dead, collection, opened, rated, not_status, works, not_tags, format)
     total = db.scalar(select(func.count(Resource.id)).where(*filters)) or 0
     stmt = select(Resource).options(selectinload(Resource.tags)).where(*filters).order_by(*order)
     if sort == "relevance" and not search.parse(q).empty:  # 最相符：符合篩選的作品依搜尋分數排
@@ -107,6 +107,8 @@ def create_resource(payload: ResourceInput, db: Session = Depends(db_session)):
     resource.finished_at = datetime.now(timezone.utc) if payload.status == "已完食" else None
     if not resource.kind:  # 沒指定類型時：網站首頁設為「網站」，其他沿用來源的類型
         resource.kind = default_kind(db, resource)
+    if resource.kind != "漫畫":
+        resource.format = ""  # 種類只有漫畫才有
     if metadata.icon_url(resource.image_url) and not resource.image_kind:
         resource.image_kind = "icon"  # 網站圖示當成的封面
     db.add(resource)
@@ -134,10 +136,15 @@ def update_resource(resource_id: int, payload: ResourceInput, db: Session = Depe
     resource.last_opened_at = opened_value(resource.status, payload.status, resource.last_opened_at)
     if (payload.code, payload.source_name) != (resource.code, resource.source_name):
         resource.link_checked_at = None  # 換了網址：下次巡檢要重新檢查
+    sent = dump(payload, exclude_unset=True)
     for key, value in dump(payload, exclude={"tags", "tag_categories"}).items():
+        if key in ("pages", "format") and key not in sent:
+            continue  # 請求沒帶頁數／種類（舊版手機、外部呼叫）：保留原值，不清空
         setattr(resource, key, value)
     if not resource.kind:  # 沒指定類型時：網站首頁設為「網站」，其他沿用來源的類型
         resource.kind = default_kind(db, resource)
+    if resource.kind != "漫畫":
+        resource.format = ""  # 種類只有漫畫才有
     assign_tags(db, resource, payload.tags)
     db.flush()
     refresh.categorise(db, payload.tag_categories)
@@ -210,7 +217,8 @@ def fill_blanks(resource_id: int, payload: FillBlanksInput, db: Session = Depend
         db.execute(table.update().where(table.c.id == resource.id).values(image_url="", image_kind="", updated_at=resource.updated_at))
         set_committed_value(resource, "image_url", "")
         set_committed_value(resource, "image_kind", "")
-    changes = refresh.apply(db, resource, {"title": payload.title.strip(), "image_url": image, "tags": payload.tags, "categories": payload.tag_categories})
+    changes = refresh.apply(db, resource, {"title": payload.title.strip(), "image_url": image, "tags": payload.tags, "categories": payload.tag_categories,
+                                           "pages": payload.pages, "format": payload.format})
     if changes["changed"]:
         resource.updated_at = datetime.now(timezone.utc)  # 使用者動手補的：和編輯存檔一樣排到「最近更新」前面
     db.commit()
@@ -270,6 +278,7 @@ def relink(resource_id: int, payload: RelinkInput, db: Session = Depends(db_sess
     source_name, code = payload.source_name.strip(), payload.code.strip()
     if find_duplicate(db, code, source_name, exclude_id=resource_id):
         raise HTTPException(409, "這個來源的作品已經在典藏中")
+    before = undo.snapshot(db, resource)  # 改動前的狀態，按「復原」時整件寫回
     old_url = refresh.page_url(resource, db.scalar(select(Source.template).where(Source.name == resource.source_name)) or "")
     if resource.image_url and resource.image_url == metadata.known_cover(old_url):
         resource.image_url = ""  # 封面只是依舊編號推得的（例如記錯網站的禁漫編號），換成新來源的封面
@@ -283,6 +292,7 @@ def relink(resource_id: int, payload: RelinkInput, db: Session = Depends(db_sess
     if not resource.image_url and (image := metadata.known_cover(url)):  # 有防護的網站（禁漫）讀不到作品頁，封面依編號推得
         resource.image_url, resource.image_kind = image, ""
         covers.schedule(image)
+    undo_id = undo.record(db, "restore", f"「{resource.title or code}」改用 {source_name} {code}", {"resource": before})
     commit_or_conflict(db)
     added = 0
     if url:
@@ -297,7 +307,7 @@ def relink(resource_id: int, payload: RelinkInput, db: Session = Depends(db_sess
         except metadata.MetadataError:
             db.rollback()
     db.refresh(resource)
-    return {**covers.with_ratios(db, [serialise(resource)])[0], "added_tags": added}
+    return {**covers.with_ratios(db, [serialise(resource)])[0], "added_tags": added, "undo": undo_id}
 
 
 @router.post("/batch")

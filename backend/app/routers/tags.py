@@ -29,12 +29,12 @@ def tag_names(db: Session = Depends(db_session)):
 def tag_stats(
     q: str = "", status: str | None = None, source: str | None = None,
     tags: list[str] = Query(default=[]), tag_mode: Literal["all", "any"] = "all", kind: str | None = None, dead: bool | None = None,
-    collection: int | None = None, rated: bool | None = None, not_tags: list[str] = Query(default=[]), term: str = "",
+    collection: int | None = None, rated: bool | None = None, not_tags: list[str] = Query(default=[]), term: str = "", format: str | None = None,
     limit: int = Query(default=300, ge=1, le=5000), db: Session = Depends(db_session),
 ):
     """標籤與件數。帶入目前的篩選條件時，只計算符合條件的作品（多選時可看出還能再縮小到哪些標籤）。
     term 搜尋標籤名稱（和搜尋框同一套比對：全半形、簡繁、同義詞），最接近的排前面。"""
-    matching = select(Resource.id).where(*resource_filters(q, status, source, tags, tag_mode, kind, dead, collection, rated=rated, not_tags=not_tags))
+    matching = select(Resource.id).where(*resource_filters(q, status, source, tags, tag_mode, kind, dead, collection, rated=rated, not_tags=not_tags, format=format))
     rows = db.execute(
         select(Tag.name, Tag.category, func.count(resource_tags.c.resource_id))
         .join(resource_tags, resource_tags.c.tag_id == Tag.id)

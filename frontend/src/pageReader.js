@@ -5,11 +5,15 @@
 // - 還沒讀的作品存在 localStorage（oas-read-queue），App 重新載入（例如分享進來）或被系統關掉，再開時接著讀；
 // - 「背景讀取」關掉時（公開版第一次啟動可以不開）不讀也不排；公開版在設定裡關掉時連排隊的網址一起清掉（clearReads）；
 // - 分享、抓取資訊這類使用者正在等的單頁讀取優先，佇列讀完手上這頁就讓它先讀。
+// - 禁漫換編號偵測（startJmCheck）也走這個佇列：列上有 check:true 的是「讀舊作品頁看還在不在」，結果送 /linkcheck/jm/result
+//   （不是 fill-page）；一輪最多幾件由伺服器決定（jm_detect.ROUND_LIMIT），間隔沿用 GAP_MS。讀到防護驗證頁、空白或逾時就不標失效，
+//   並把這一輪剩下的禁漫檢查全部從佇列拿掉，下次開 App 再試。
 import { preferences } from './preferences.js'
 import { api } from './shared.jsx'
 
 const QUEUE_KEY = 'oas-read-queue'
 const GAP_MS = 1500  // 同一個網站不要連續狂讀
+const JM_CHECK_DELAY_MS = 30000  // 開 App 後等一下才排禁漫檢查，避開啟動時的其他讀取；每次開 App 最多一輪
 
 const waiting = {}
 window.__oasPageDone = (id, html) => {
@@ -47,10 +51,12 @@ export async function readPage(url, timeout = 40000, later = false) {
 // ---------- 全域佇列 ----------
 
 const valid = row => row && Number.isInteger(row.id) && /^https?:\/\//i.test(row.url || '')
+const clean = row => row.check ? { id: row.id, url: row.url, check: true } : { id: row.id, url: row.url }
+const same = (a, b) => a.id === b.id && Boolean(a.check) === Boolean(b.check)  // 同一件作品的「補資料」與「檢查還在不在」是兩件事
 const loadQueue = () => {
   try {
     const rows = JSON.parse(localStorage.getItem(QUEUE_KEY) || '[]')
-    return Array.isArray(rows) ? rows.filter(valid).map(row => ({ id: row.id, url: row.url })) : []
+    return Array.isArray(rows) ? rows.filter(valid).map(clean) : []
   } catch { return [] }
 }
 const saveQueue = rows => {
@@ -58,8 +64,10 @@ const saveQueue = rows => {
 }
 
 let queue = loadQueue()
-// 這一輪的進度：done／total 是這次開始讀之後的件數（重開 App 接著讀時從 0 算起），filled 是補到資料的件數
-let reader = { running: false, done: 0, total: 0, filled: 0 }
+// 這一輪的進度：done／total 是這次開始讀之後的件數（重開 App 接著讀時從 0 算起），filled 是補到資料的件數；
+// dead 是禁漫檢查發現作品已不存在的件數，paused 是禁漫檢查讀到防護驗證頁而停下
+const idle = (extra = {}) => ({ running: false, done: 0, total: 0, filled: 0, dead: 0, paused: false, ...extra })
+let reader = idle()
 let worker = null
 let generation = 0  // clearReads 清掉佇列後加一，讀到一半的那件回來時就不再記進度
 const listeners = new Set()
@@ -81,11 +89,20 @@ function work() {
       const row = queue[0]
       const html = await readPage(row.url, 40000, true)
       if (!canReadPages() || round !== generation) break  // 讀到一半關掉背景讀取：不送出這頁
-      const result = html ? await api('/attention/fill-page', { method: 'POST', body: JSON.stringify({ id: row.id, html }) }).catch(() => null) : null
+      let result = null, verdict = ''
+      if (row.check) {  // 空白（驗證頁沒過、逾時）直接算 challenge，不送伺服器
+        verdict = html ? (await api('/linkcheck/jm/result', { method: 'POST', body: JSON.stringify({ id: row.id, html }) }).catch(() => null))?.result || '' : 'challenge'
+      } else if (html) {
+        result = await api('/attention/fill-page', { method: 'POST', body: JSON.stringify({ id: row.id, html }) }).catch(() => null)
+      }
       if (round !== generation) break
-      queue = queue.filter(item => item.id !== row.id)
+      const before = queue.length
+      queue = queue.filter(item => !same(item, row))
+      const stopped = verdict === 'challenge'
+      if (stopped) queue = queue.filter(item => !item.check)  // 這一輪的禁漫檢查全部停止
       saveQueue(queue)
-      reader = { ...reader, done: reader.done + 1, filled: reader.filled + (result?.filled ? 1 : 0) }
+      reader = { ...reader, done: reader.done + 1, total: reader.total - (stopped ? before - 1 - queue.length : 0), filled: reader.filled + (result?.filled ? 1 : 0),
+        dead: reader.dead + (verdict === 'dead' ? 1 : 0), paused: reader.paused || stopped }
       emit()
       if (queue.length) await pause(GAP_MS)
     }
@@ -99,17 +116,18 @@ function work() {
 /** 把作品排進背景讀取（[{ id, url }]，已在佇列的略過）。回傳新排入的件數；不能讀（不是手機 App、背景讀取關閉）時回傳 0。 */
 export function queueReads(rows) {
   if (!canReadPages()) return 0
-  const known = new Set(queue.map(row => row.id))
+  const known = new Set(queue.map(row => `${row.check ? 'c' : 'r'}${row.id}`))
   const fresh = []
   for (const row of rows) {
-    if (!valid(row) || known.has(row.id)) continue
-    known.add(row.id)
-    fresh.push({ id: row.id, url: row.url })
+    const key = `${row?.check ? 'c' : 'r'}${row?.id}`
+    if (!valid(row) || known.has(key)) continue
+    known.add(key)
+    fresh.push(clean(row))
   }
   if (!fresh.length) return 0
   queue = [...queue, ...fresh]
   saveQueue(queue)
-  reader = reader.running ? { ...reader, total: reader.total + fresh.length } : { running: true, done: 0, total: queue.length, filled: 0 }
+  reader = reader.running ? { ...reader, total: reader.total + fresh.length } : idle({ running: true, total: queue.length })
   emit()
   work()
   return fresh.length
@@ -118,9 +136,27 @@ export function queueReads(rows) {
 /** App 開啟時呼叫：上次還沒讀完的接著讀（背景讀取關閉時不讀）。 */
 export function resumeReads() {
   if (reader.running || !queue.length || !canReadPages()) return
-  reader = { running: true, done: 0, total: queue.length, filled: 0 }
+  reader = idle({ running: true, total: queue.length })
   emit()
   work()
+}
+
+/** 禁漫換編號偵測：向伺服器要這一輪要檢查的禁漫作品（最多 jm_detect.ROUND_LIMIT 件），排進背景讀取；伺服器不連外。
+ *  每次開 App 最多一輪（讀到驗證頁就停，下次開 App 再試）；不是手機 App 或背景讀取關閉時什麼都不做。 */
+let jmChecked = false
+export async function startJmCheck() {
+  if (jmChecked || !canReadPages()) return
+  jmChecked = true
+  try {
+    const data = await api('/linkcheck/jm/targets')
+    queueReads((data.targets || []).map(target => ({ id: target.id, url: target.url, check: true })))
+  } catch { /* 讀不到清單：下次開 App 再試 */ }
+}
+
+/** 開 App 一小段時間後才開始禁漫檢查；回傳取消用的函式（給 useEffect）。 */
+export function scheduleJmCheck() {
+  const timer = setTimeout(startJmCheck, JM_CHECK_DELAY_MS)
+  return () => clearTimeout(timer)
 }
 
 /** 公開版在設定裡關掉背景讀取時呼叫：清掉還沒讀的作品網址（含 localStorage 裡存的），進度歸零。 */
@@ -128,6 +164,6 @@ export function clearReads() {
   generation++
   queue = []
   saveQueue(queue)
-  reader = { running: false, done: 0, total: 0, filled: 0 }
+  reader = idle()
   emit()
 }

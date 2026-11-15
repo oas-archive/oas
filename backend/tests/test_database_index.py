@@ -29,8 +29,8 @@ def test_old_database_gets_the_index_on_startup_and_restarts_are_harmless():
     initialise_database()
     with engine.begin() as connection:  # 舊版建的資料庫：沒有這個索引，已經有資料
         connection.execute(text(f"DROP INDEX {INDEX}"))
-        connection.execute(text("INSERT INTO resources (id, code, source_name, title, note, image_url, rating, status, created_at, updated_at, image_kind, link_dead, kind, progress) "
-                                "VALUES (1, 'IDX-1', '虛構站', '', '', '', 0, '未讀', '2025-01-01', '2025-01-01', '', 0, '', '')"))
+        connection.execute(text("INSERT INTO resources (id, code, source_name, title, note, image_url, rating, status, created_at, updated_at, image_kind, link_dead, kind, progress, format) "
+                                "VALUES (1, 'IDX-1', '虛構站', '', '', '', 0, '未讀', '2025-01-01', '2025-01-01', '', 0, '', '', '')"))
         connection.execute(text("INSERT INTO tags (id, name, category) VALUES (1, '虛構標籤', 'tag')"))
         connection.execute(text("INSERT INTO resource_tags (resource_id, tag_id) VALUES (1, 1)"))
     assert INDEX not in indexes() and "SCAN" in plan()

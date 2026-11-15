@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { api, CATEGORY_NAMES, KINDS, useFocusTrap } from './shared.jsx'
+import { api, CATEGORY_NAMES, FORMATS, KINDS, useFocusTrap } from './shared.jsx'
 
 // 分類分頁的順序：最常用的一般標籤在前，作者、社團數量多放後面
 const TAB_ORDER = ['tag', 'parody', 'character', 'artist', 'group', 'category', 'language']
@@ -15,7 +15,7 @@ function ChoiceGroup({ label, value, options, onChange }) {
 
 // 篩選面板：類型、來源、標籤都在這裡。手機從底部滑出，電腦從右側滑出。
 // 每按一下就套用，底部按鈕的件數是真實結果，按了只是關閉面板。
-export default function FilterSheet({ included, excluded, mode, kind, source, sources, total, loading, filterParams, drafting, canSave, onIncluded, onExcluded, onMode, onKind, onSource, onClearAll, onSave, onClose }) {
+export default function FilterSheet({ included, excluded, mode, kind, format, source, sources, total, loading, filterParams, drafting, canSave, onIncluded, onExcluded, onMode, onKind, onFormat, onSource, onClearAll, onSave, onClose }) {
   const [term, setTerm] = useState('')
   const [searched, setSearched] = useState('')
   const [tab, setTab] = useState('')
@@ -111,7 +111,7 @@ export default function FilterSheet({ included, excluded, mode, kind, source, so
       <button type="button" className="fs-row-exclude" aria-pressed={off} onClick={() => exclude(name)}>{off ? '取消排除' : '排除'}</button>
     </li>
   }
-  const hasAny = Boolean(kind || source || included.length || excluded.length)
+  const hasAny = Boolean(kind || format || source || included.length || excluded.length)
   const pinned = [...included, ...excluded].map(name => ({ name, count: counts[name] ?? null }))
 
   return createPortal(<div className={`filter-sheet${leaving ? ' is-leaving' : ''}`} onClick={event => event.target === event.currentTarget && close()}>
@@ -120,6 +120,7 @@ export default function FilterSheet({ included, excluded, mode, kind, source, so
       <div className="fs-body" ref={body}>
         {drafting && <p className="fs-note">選好條件後按下面的按鈕取名。符合條件的作品會自動出現在書單裡，之後收錄的也一樣。</p>}
         <ChoiceGroup label="類型" value={kind} options={KINDS} onChange={onKind} />
+        {(!kind || kind === '漫畫') && <ChoiceGroup label="漫畫種類" value={format} options={FORMATS} onChange={onFormat} />}
         <ChoiceGroup label="來源" value={source} options={sources} onChange={onSource} />
         <section className="fs-group">
           <h3>標籤</h3>
