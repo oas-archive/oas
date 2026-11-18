@@ -15,6 +15,12 @@ def plan() -> str:
     # 連線池裡的連線快取了 EXPLAIN 的敘述，建索引後不會重新規劃（一般查詢會）；換新連線看
     engine.dispose()
     with engine.connect() as connection:
+        # 啟動時的 PRAGMA optimize 會替資料表建統計；測試的表只有 1 筆，較新的 SQLite（GitHub 的 Linux）看了統計會選全表掃描，
+        # 這對 1 筆資料是對的，但這裡要看的是「索引能不能用」：先清掉統計再規劃（2026-11-18 CI 失敗的原因）
+        if connection.execute(text("SELECT 1 FROM sqlite_master WHERE name = 'sqlite_stat1'")).first():
+            connection.execute(text("DELETE FROM sqlite_stat1"))
+            connection.execute(text("ANALYZE sqlite_schema"))  # 讓這個連線重新讀統計（已清空）
+            connection.commit()
         return " ".join(row[-1] for row in connection.execute(text("EXPLAIN QUERY PLAN SELECT resource_id FROM resource_tags WHERE tag_id = 1")))
 
 
@@ -36,6 +42,8 @@ def test_old_database_gets_the_index_on_startup_and_restarts_are_harmless():
     assert INDEX not in indexes() and "SCAN" in plan()
     initialise_database()
     initialise_database()  # 再啟動一次不會出錯
+    with engine.begin() as connection:  # 模擬較新 SQLite 的 PRAGMA optimize：替這張只有 1 筆的表建統計（不清掉的話會選全表掃描）
+        connection.execute(text("ANALYZE"))
     assert INDEX in indexes() and INDEX in plan()
     with engine.connect() as connection:
         assert connection.execute(text("SELECT resource_id FROM resource_tags WHERE tag_id = 1")).scalars().all() == [1]
