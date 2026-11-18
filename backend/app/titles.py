@@ -3,6 +3,7 @@
 搜尋、重複作品比對、備份都照用原始標題；作品頁主標題用短標題，完整標題在下方小字。
 每一步修剪後若只剩不到 MIN_CHARS 個字（不算標點），就不套用那一步，最後太長才在字詞邊界截斷加「…」。
 """
+from functools import lru_cache
 import re
 import unicodedata
 
@@ -132,6 +133,7 @@ def _truncate(title: str) -> str:
     return head.rstrip(" 、，,。.・:：/-~～") + "…"
 
 
+@lru_cache(maxsize=50_000)  # 純函式：同一個標題結果一樣。清單、備份、搜尋每次序列化都會呼叫，原本 1,320 件每次要 90 ms
 def short_title(title: str) -> str:
     original = re.sub(r"\s+", " ", (title or "").strip())
     text = original

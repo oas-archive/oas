@@ -15,6 +15,10 @@
 /* v0.5 — 瀑布流、快速評分、下拉選單、捲軸 */
 .oas-gallery{display:grid;align-items:start}.masonry-column{display:flex;flex-direction:column;min-width:0}
 .oas-gallery article{position:relative}
+/* 書庫一次 120 張卡（約 4,800 個節點）：畫面外的卡片先不排版，載入時主執行緒工作少約四成（效率檢視 2026-11-16）。
+   auto 會記住實際高度；450／580px 是還沒畫過時的估計（實測卡片約 455／587px，估得準捲軸才不會越捲越長） */
+.oas-gallery article{content-visibility:auto;contain-intrinsic-size:auto 450px}
+@media(max-width:779px){.oas-gallery article{contain-intrinsic-size:auto 580px}}
 .oas-gallery article:hover,.shelf-row article:hover{border-color:color-mix(in srgb,var(--ambient) 55%,transparent)}
 .oas-gallery .cover,.shelf-row .cover{position:relative}
 .status-dot{display:inline-block;width:7px;height:7px;margin-right:5px;border-radius:50%;vertical-align:1px;font-style:normal}
@@ -235,6 +239,7 @@ kbd{display:inline-grid;place-items:center;min-width:18px;height:18px;padding:0 
 .oas-nav{padding:24px 14px 14px;gap:0;background:transparent;border-right:1px solid rgba(255,255,255,.06)}
 .oas-nav .oas-mark{padding:0 10px 20px}
 .oas-nav .nav-pages{display:grid;gap:2px}
+.oas-nav .nav-scroll.is-pending,.oas-nav .nav-bottom.is-pending{visibility:hidden}
 .nav-scroll{flex:1;min-height:0;margin:16px -6px 12px;padding:0 6px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:#ffffff1f transparent}
 .nav-section{padding:14px 0 6px;border-top:1px solid rgba(255,255,255,.06)}
 .nav-section h2{display:flex;align-items:center;justify-content:space-between;margin:0 10px 8px;color:#8a94b4;font:500 calc(12px*var(--fz)) var(--ui)}
@@ -1088,6 +1093,7 @@ kbd{display:inline-grid;place-items:center;min-width:18px;height:18px;padding:0 
 @media(max-width:779px){.insights>.filter-row{margin-bottom:14px}}
 /* 深潛帶：把舊深潛卡的半透明手法壓成一條矮卡。封面只鋪右側（細條很寬，放大整張會糊），往左淡進作品封面色的深底 */
 .deep-strip{position:relative;display:flex;flex-direction:column;align-items:flex-start;justify-content:flex-end;gap:3px;width:100%;height:125px;margin:0 0 16px;padding:14px 18px;overflow:hidden;isolation:isolate;border:0;border-radius:12px;background:linear-gradient(100deg,#0b0f1c 30%,color-mix(in srgb,var(--cover-colour,var(--ambient)) 30%,#0b0f1c));box-shadow:inset 0 0 0 1px rgba(255,255,255,.08);color:#f3f5ff;text-align:left;cursor:pointer;transition:scale .16s cubic-bezier(.23,1,.32,1)}
+.deep-strip-slot{width:100%;height:125px;margin:0 0 16px}
 .deep-strip:active{scale:.99}
 .deep-strip img{position:absolute;top:0;right:0;z-index:-2;width:min(100%,640px);height:100%;object-fit:cover;object-position:center 22%;opacity:.6;-webkit-mask-image:linear-gradient(90deg,transparent,#000 70%);mask-image:linear-gradient(90deg,transparent,#000 70%);transition:opacity .25s}
 .deep-strip::after{content:"";position:absolute;inset:0;z-index:-1;background:linear-gradient(100deg,#0b0f1cd9 30%,#0b0f1c66 70%,#0b0f1c26)}
@@ -1098,7 +1104,7 @@ kbd{display:inline-grid;place-items:center;min-width:18px;height:18px;padding:0 
 @media(prefers-reduced-motion:reduce){.deep-strip b,.deep-strip img{animation:none}}
 .deep-strip:focus-visible{outline:2px solid var(--ambient);outline-offset:2px}
 @media(hover:hover) and (pointer:fine){.deep-strip:hover img{opacity:.75}}
-@media(max-width:779px){.deep-strip{height:115px;margin-bottom:14px;padding:12px 14px}.deep-strip b{font-size:calc(16px*var(--fz))}}
+@media(max-width:779px){.deep-strip-slot{height:115px;margin-bottom:14px}.deep-strip{height:115px;margin-bottom:14px;padding:12px 14px}.deep-strip b{font-size:calc(16px*var(--fz))}}
 /* 篩選和排序是同一組工具，放在展廳標題列，規格跟排序下拉一樣 */
 [data-look="b2"] .gallery-tools .filter-open{flex:none;width:auto;min-height:32px;padding:0 12px;border:1px solid transparent;border-radius:9px;background:linear-gradient(#171925,#11131d) padding-box,linear-gradient(170deg,#f2c46d59,rgba(255,255,255,.07) 48%,#f2c46d26) border-box;color:#c4cce2;font-size:calc(12px*var(--fz))}
 .gallery-tools .filter-open>span{color:inherit;font-size:inherit}
@@ -1142,6 +1148,7 @@ kbd{display:inline-grid;place-items:center;min-width:18px;height:18px;padding:0 
 @media(hover:hover) and (pointer:fine) and (min-width:781px){
   :root{--fz:1.08}
   .home .shelf-row{grid-auto-columns:200px;gap:14px}
+  .deep-strip-slot{height:250px;margin-bottom:18px}
   .deep-strip{height:250px;gap:6px;margin-bottom:18px;padding:22px 26px}
   .deep-strip img{width:100%;-webkit-mask-image:linear-gradient(90deg,transparent,#000 33%);mask-image:linear-gradient(90deg,transparent,#000 33%)}
   .deep-strip::after{background:linear-gradient(100deg,#0b0f1cd9 12%,#0b0f1c66 36%,#0b0f1c1a 70%)}

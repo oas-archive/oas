@@ -267,7 +267,7 @@ export default function Showcase({ item, link, prev, next, direction = 0, flipFr
       <figure className="showcase-cover" style={{ aspectRatio: `1 / ${ratio}` }}>
         {/* 圖片以網址為 key：載入失敗被 hideBroken 藏起來的那張，換成新的封面網址（補上空白欄位、讀到作品頁）時要換一個新元素，否則新封面也看不到 */}
         {mode === 'edit' && preview && preview !== item.image_url ? <img key={preview} src={imageSrc(preview)} alt="" onError={hideBroken} /> : isFaceCover(item) ? <CoverFace item={item} width={480} /> : item.image_url ? <>
-          <img key={firstSrc} src={firstSrc} alt="" onError={hideBroken} />
+          <img key={firstSrc} src={firstSrc} alt="" fetchPriority="high" onError={hideBroken} />
           {settled && !showsFull && <img key={coverSrc(item)} className={`is-full${loadedSrc === coverSrc(item) ? ' is-loaded' : ''}`} src={coverSrc(item)} alt="" decoding="async" onLoad={event => setLoadedSrc(event.currentTarget.getAttribute('src'))} onError={hideBroken} />}
         </> : <span>OAS<small>尚未設定封面</small></span>}
       </figure>

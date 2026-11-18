@@ -6,6 +6,7 @@ from app.database import Resource
 def test_source_template_must_be_http(client):
     assert client.put("/api/sources", json={"name": "怪網站", "template": "file:///etc/{}"}).status_code == 422
     assert client.put("/api/sources", json={"name": "怪網站", "template": "javascript:alert('{}')"}).status_code == 422
+    assert client.put("/api/sources", json={"name": "怪網站", "template": "data:text/html,{}"}).status_code == 422
     assert client.put("/api/sources", json={"name": "正常網站", "template": "https://example.com/{}"}).status_code == 200
     assert client.put("/api/sources", json={"name": "直接網址", "template": "{}"}).status_code == 200
 
@@ -21,3 +22,9 @@ def test_page_url_only_http():
     assert refresh.page_url(Resource(code="1"), "file:///x/{}") == ""
     assert refresh.page_url(Resource(code="1"), "https://a.example/{}") == "https://a.example/1"
     assert refresh.page_url(Resource(code="https://b.example/x"), "{}") == "https://b.example/x"
+
+
+def test_page_url_rejects_non_http_schemes():
+    for bad in ("javascript:alert('{}')", "data:text/html,{}", "file:///x/{}"):
+        assert refresh.page_url(Resource(code="1"), bad) == ""
+    assert refresh.page_url(Resource(code="1"), "http://a.example/{}") == "http://a.example/1"

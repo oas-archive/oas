@@ -28,10 +28,18 @@ def _executed(state) -> None:
         state.session.info["oas_changed"] = True
 
 
+def quiet(session) -> None:
+    """這次 commit 只改了不影響任何快取結果的東西（巡檢時間、巡檢工作佇列）：不讓快取失效。
+    手機背景巡檢每查一件、佇列每做完一件就 commit 一次，原本每次都讓首頁、重複作品、統計等快取全部重算；
+    2026-11-17 手機實測，這些頁面「資料沒變」時 15～30 毫秒，重算時 0.7～1 秒。巡檢時間本來就不算資料變動（見備份指紋）。"""
+    session.info["oas_quiet"] = True
+
+
 @event.listens_for(Session, "after_commit")
 def _committed(session) -> None:
     global _version
-    if session.info.pop("oas_changed", False):
+    changed, quiet_commit = session.info.pop("oas_changed", False), session.info.pop("oas_quiet", False)
+    if changed and not quiet_commit:
         with _lock:
             _version += 1
 
@@ -39,6 +47,7 @@ def _committed(session) -> None:
 @event.listens_for(Session, "after_rollback")
 def _rolled_back(session) -> None:
     session.info.pop("oas_changed", None)
+    session.info.pop("oas_quiet", None)
 
 
 def version() -> int:

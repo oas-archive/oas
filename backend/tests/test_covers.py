@@ -307,3 +307,24 @@ def test_redirect_chain_is_cut_off_within_total_time(slow_site):
         covers.fetch_image(f"{base}/r0")
     assert time.monotonic() - start < 2.5
     assert len(hits) < 10  # 不會把 10 次轉址都走完
+
+
+def test_draft_is_skipped_on_old_pillow(monkeypatch):
+    """Pillow 13 以前（手機個人版 11.0.0）不用 JPEG 的 draft（Pillow 13.0.0 才修好）；電腦的 13.x 照用。"""
+    import PIL
+
+    from app import covers
+
+    class Image:
+        drafted = False
+
+        def draft(self, mode, size):
+            self.drafted = True
+
+    for version, expected in (("11.0.0", False), ("13.0.0", True)):
+        covers._draft_safe.cache_clear()
+        monkeypatch.setattr(PIL, "__version__", version)
+        image = Image()
+        covers._draft(image, "RGB", (96, 96))
+        assert image.drafted is expected
+    covers._draft_safe.cache_clear()

@@ -218,6 +218,18 @@ def test_stats_shape(client):
     assert data["tags"][0] == {"name": "純愛向", "count": 2, "avg_rating": 3.25, "finished": 1}
 
 
+
+def test_pages_are_reused_until_data_changes(client):
+    """統計、口味地圖、標籤健檢、待整理、探索依資料版本重用；有寫入就重算。"""
+    add(client, "a", rating=4, tags=["純愛向"])
+    paths = ["/api/stats", "/api/insights/taste", "/api/insights/tags", "/api/attention", "/api/explore"]
+    first = {path: client.get(path).json() for path in paths}
+    assert {path: client.get(path).json() for path in paths} == first
+    add(client, "b", rating=2, tags=["純愛向"])
+    assert client.get("/api/stats").json()["totals"]["total"] == 2
+    assert client.get("/api/insights/taste").json() != first["/api/insights/taste"]
+
+
 def test_backup_keeps_progress_and_smart_lists(client):
     add(client, "a", status="閱讀中", progress="p.45")
     client.post("/api/collections", json={"name": "智慧", "query": "status=閱讀中"})

@@ -12,6 +12,7 @@ os.environ["OAS_DATABASE_URL"] = f"sqlite:///{_tmp}/test.db"
 os.environ["OAS_COVER_DIR"] = f"{_tmp}/covers"
 os.environ["OAS_LINKCHECK"] = "off"
 os.environ["OAS_JOBS"] = "off"
+os.environ["OAS_WARM_UP_DELAY"] = "0"  # 測試不延後預熱：延後的背景執行緒會跑到下一個測試的資料庫
 os.environ["OAS_SEED"] = "off"
 os.environ["OAS_ALLOWED_HOSTS"] = "localhost,127.0.0.1,testserver"
 # 版本與平台明確設定：公開 repo 的 app 資料夾有公開版標記檔，不設的話測試會以公開版執行。要測公開版的測試自己改 settings。

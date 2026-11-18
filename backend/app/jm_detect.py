@@ -32,7 +32,7 @@ from urllib.parse import unquote
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from . import linkcheck, metadata, refresh
+from . import cache, linkcheck, metadata, refresh
 from .database import Resource, Source
 from .search import fold
 from .site_parsers import parse_jm
@@ -108,6 +108,8 @@ def record(db: Session, resource_id: int, page: str) -> dict:
         values = {"link_checked_at": datetime.now(timezone.utc), "updated_at": row.updated_at}  # 不動 updated_at，書庫排序不變
         if result == "dead":
             values["link_dead"] = True
+        else:
+            cache.quiet(db)  # 只記巡檢時間：快取不必重算
         db.execute(Resource.__table__.update().where(Resource.id == resource_id).values(**values))
         db.commit()
     return {"result": result}

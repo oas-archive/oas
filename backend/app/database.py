@@ -1,8 +1,9 @@
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
 from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, Integer, REAL, String, Table, Text, create_engine, event
-from sqlalchemy.exc import DBAPIError
+from sqlalchemy.exc import DBAPIError, OperationalError
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
 
 from . import settings
@@ -252,6 +253,9 @@ class CoverCache(Base):
     fingerprint: Mapped[str | None] = mapped_column(String(16))  # 封面 dHash（16 位十六進位），找重複作品用；"" 表示無法計算
 
 
+_columns_lock = threading.Lock()
+
+
 def _add_missing_columns() -> None:
     """create_all 不會替既有資料表加欄位；這裡補上後續版本新增的欄位。"""
     from sqlalchemy import inspect, text
@@ -265,15 +269,22 @@ def _add_missing_columns() -> None:
         "sources": {"kind": "VARCHAR(20) NOT NULL DEFAULT ''"},
         "tags": {"category": "VARCHAR(20) NOT NULL DEFAULT 'tag'"},
     }
-    inspector = inspect(engine)
-    with engine.begin() as connection:
+    # 檢查與新增在同一個連線、同一筆交易裡做，並且同時只有一條執行緒在補：原本先用另一個連線看欄位、再新增，
+    # 兩次啟動重疊時偶爾撞到 duplicate column name（2026-11-16 整套測試兩次中出現一次）。
+    with _columns_lock, engine.begin() as connection:
+        inspector = inspect(connection)
         for table, columns in additions.items():
             if not inspector.has_table(table):
                 continue
             existing = {column["name"] for column in inspector.get_columns(table)}
             for name, sql_type in columns.items():
-                if name not in existing:
+                if name in existing:
+                    continue
+                try:
                     connection.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {sql_type}"))
+                except OperationalError as error:  # 別的程序（例如同時開著的另一個服務）剛好先補好了
+                    if "duplicate column name" not in str(error).lower():
+                        raise
 
 
 def initialise_database() -> None:
@@ -291,3 +302,6 @@ def initialise_database() -> None:
         with engine.begin() as connection:
             if connection.execute(text("PRAGMA user_version")).scalar() < SCHEMA_VERSION:  # 較新的程式建的資料庫（版本更高）不降版
                 connection.execute(text(f"PRAGMA user_version = {SCHEMA_VERSION}"))
+            # SQLite 官方對長時間開著的資料庫的建議：開啟時跑一次，讓查詢規劃器有統計可用（0x10002＝這次也分析還沒分析過的資料表）。
+            # 3.46 以前的版本沒有自動限量，但典藏只有幾千件，分析一次只要幾毫秒。
+            connection.execute(text("PRAGMA optimize=0x10002"))

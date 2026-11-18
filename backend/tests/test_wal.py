@@ -2,6 +2,7 @@
 import sqlite3
 from pathlib import Path
 
+import pytest
 from sqlalchemy import text
 
 from app.database import DATABASE_URL, SCHEMA_VERSION, Base, Resource, SessionLocal, engine, initialise_database, replace_database_file, snapshot_database
@@ -72,10 +73,13 @@ def test_plain_copy_of_main_file_alone_can_miss_data(tmp_path):
     copy = tmp_path / "naive.db"
     copy.write_bytes(DB_FILE.read_bytes())
     try:
-        # 只複製主檔拿到的不是現在的資料：可能少了還在 -wal 的新寫入，也可能是前一項測試留下、已被刪掉的舊資料
-        assert count_in(copy) != 500
+        copied = count_in(copy)
     except sqlite3.OperationalError:  # 連資料表都還在 -wal 裡
-        pass
+        return
+    if copied == 500:  # -wal 檔 checkpoint 後不會變空，主檔可能已經是最新（平行跑測試時較常遇到）：這次示範不成立就略過
+        pytest.skip("這次寫入已經 checkpoint 進主檔")
+    # 只複製主檔拿到的不是現在的資料：可能少了還在 -wal 的新寫入，也可能是前一項測試留下、已被刪掉的舊資料
+    assert copied != 500
 
 
 def test_replace_ignores_stale_wal(tmp_path):

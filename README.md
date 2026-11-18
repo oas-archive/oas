@@ -61,6 +61,16 @@
 - **照顧舊收藏**：定期巡檢來源，標出已失效的連結，並能到其他網站找同一本、一鍵改用新來源。
 - **備份**：關閉時自動備份（保留最近 14 份），也能隨時下載完整備份、合併或取代還原。備份不含封面圖片，還原後會再向來源網站取得。
 
+## 相關作品怎麼找
+
+打開一件作品，下方會列出內容最接近的作品，並標上相似度百分比。
+
+- **越少見的標籤越有分量**：大家都有的標籤（超過三成作品都有）和只出現一次的標籤不算；越少見的共同標籤，越能代表兩件作品真的像。
+- **不同種類的標籤份量不同**：同一部原作最重，角色、作者次之，社團最輕。
+- **標籤多不等於跟誰都像**：會依標籤總量校正，標籤特別多的作品不會到處都排第一。
+- **權重不是憑感覺定的**：用「藏起一半標籤，看能不能把相似作品找回來」的模擬反覆測試，再用答案已知的合成資料確認方法沒有選錯，才選出最穩定的參數。
+- 只列相似度 4% 以上的前 12 件，也可以只看未讀。
+
 ## 截圖
 
 | 書庫 | 作品展示頁 |
@@ -167,5 +177,6 @@ npm run dev
 It stores links and metadata — title, tags, reading status, rating, progress — never the works themselves.
 On first launch you confirm that you are 18 or older and choose whether cover images are saved on this computer; you can change this later.
 Features include background metadata fetching with per-site rate limiting, tag categories, synonyms and translation, duplicate detection, dead-link checks, taste analysis and undo for every change.
+Related works are ranked by content similarity: shared tags weigh more the rarer they are (tags on over 30% of works or on only one work are ignored), source works count most, then characters and artists, then circles, and works with many tags are length-normalised. The weights were chosen by hiding half of each work's tags and measuring how well the hidden half is recovered, then checked against synthetic data with known answers.
 Windows portable build: download from Releases, unzip, double-click `開啟 OAS.cmd`.
 The UI is in Traditional Chinese. For adults only (18+). MIT licensed.

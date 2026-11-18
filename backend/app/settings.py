@@ -5,7 +5,7 @@
 import os
 from pathlib import Path
 
-VERSION = "0.20.72"
+VERSION = "0.20.79"
 
 
 def _split(raw: str) -> list[str]:

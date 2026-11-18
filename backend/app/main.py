@@ -12,7 +12,9 @@
 直接在電腦上執行時，打包好的網頁（frontend/dist）也由這裡提供（見 frontend.py）。
 """
 import logging
+import os
 import threading
+import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -25,8 +27,12 @@ from .routers import collections, insights, jobs, library, misc, resources, tags
 __all__ = ["app", "assign_tags", "STATUSES"]
 
 
+WARM_UP_DELAY = float(os.getenv("OAS_WARM_UP_DELAY", "3"))  # 秒：先讓第一個畫面（首頁）的請求拿到 CPU，再開始預熱（手機實測同時算時首頁被拖到 3 秒，2026-11-18）
+
+
 def _warm_up() -> None:
     """啟動後在背景先算好搜尋、重複作品、相關作品的索引：第一次打開作品頁、搜尋不用等（手機剛啟動時要 1～2 秒）。失敗只記 log。"""
+    time.sleep(WARM_UP_DELAY)
     search.warm_up()
     try:
         with SessionLocal() as db:

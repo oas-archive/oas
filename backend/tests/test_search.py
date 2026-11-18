@@ -1,4 +1,5 @@
 from app import search
+from app.database import SessionLocal
 
 
 def make(client, code, title, tags=(), note=""):
@@ -49,3 +50,16 @@ def test_did_you_mean_on_zero_results(client):
     result = client.get("/api/resources", params={"q": "swimsiut"}).json()
     assert result["total"] == 0 and result["did_you_mean"] == "swimsuit"
     assert client.get("/api/resources", params={"q": "zzzzzz"}).json()["did_you_mean"] is None
+
+
+def test_docs_are_reused_until_data_changes(client):
+    """比對用的資料依資料版本重用；新增、修改作品後要看得到新內容。"""
+    make(client, "1", "海邊旅人")
+    assert codes(client, "旅人") == ["1"]
+    with SessionLocal() as db:
+        assert search._docs(db) is search._docs(db)  # 沒有寫入：同一份
+    created = make(client, "2", "山頂旅人")
+    assert sorted(codes(client, "旅人")) == ["1", "2"]
+    changed = client.patch(f"/api/resources/{created['id']}", json={**{key: created[key] for key in ("code", "source_name", "note")}, "title": "山頂行者", "tags": []})
+    assert changed.status_code == 200 and changed.json()["title"] == "山頂行者", changed.text
+    assert codes(client, "旅人") == ["1"] and codes(client, "行者") == ["2"]

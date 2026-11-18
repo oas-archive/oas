@@ -17,7 +17,7 @@ from typing import Callable
 
 from sqlalchemy import delete, func, select
 
-from . import fetcher
+from . import cache, fetcher
 from .database import Job, SessionLocal
 
 
@@ -78,6 +78,15 @@ def pending(kind: str) -> int:
         return db.scalar(select(func.count(Job.id)).where(Job.kind == kind)) or 0
 
 
+SHOWN_KINDS = ("fill", "refresh")  # 待整理會列出「排隊中」的這兩種（attention.classify）；佇列變動要讓快取重算
+
+
+def _quiet_unless_shown(db, kind: str) -> None:
+    """佇列寫入：除了待整理會顯示的種類，其他（巡檢）不影響任何快取結果。"""
+    if kind not in SHOWN_KINDS:
+        cache.quiet(db)
+
+
 def pending_ids(kind: str) -> list[int]:
     with SessionLocal() as db:
         return list(db.scalars(select(Job.resource_id).where(Job.kind == kind).order_by(Job.priority, Job.id)).all())
@@ -95,6 +104,7 @@ def enqueue(kind: str, items: list[tuple[int, str]], mode: str = "") -> int:
             seen.add(resource_id)
             fresh.append(Job(kind=kind, resource_id=resource_id, url=url, host=fetcher.host_of(url), mode=mode, priority=spec.priority))
         db.add_all(fresh)
+        _quiet_unless_shown(db, kind)
         db.commit()
     with _lock:
         if fresh and not existing:  # 新的一批：重新計算進度
@@ -110,6 +120,7 @@ def cancel(kind: str) -> int:
     """取消這一類還沒做的工作（「停止」按鈕）。"""
     with SessionLocal() as db:
         removed = db.execute(delete(Job).where(Job.kind == kind)).rowcount or 0
+        _quiet_unless_shown(db, kind)
         db.commit()
     with _lock:
         for key in [key for key in _notices if key[0] == kind]:
@@ -173,6 +184,7 @@ def run_once() -> float | None:
             if job is not None and picked.attempts + 1 < spec.max_attempts:
                 job.attempts = picked.attempts + 1
                 job.ready_at = time.time() + wait
+                _quiet_unless_shown(db, picked.kind)
                 db.commit()
                 with _lock:
                     _notice(picked.kind, picked.host, f"{picked.host} 連續被限流，先暫停 {round(wait / 60)} 分鐘，其他網站照常進行" if paused
@@ -185,6 +197,7 @@ def run_once() -> float | None:
             fetcher.report_ok(picked.host)
         if job is not None:
             db.delete(job)
+            _quiet_unless_shown(db, picked.kind)
             db.commit()
         remaining = db.scalar(select(func.count(Job.id)).where(Job.kind == picked.kind)) or 0
     with _lock:

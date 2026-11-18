@@ -21,14 +21,21 @@ const sinceText = iso => {
 // 手機沒有側欄：導覽在底部分頁列，其餘內容在首頁書架、書庫的書單列、整理頁（v0.20.43）。
 // 與主畫面同底色、只用細邊框區隔（interface-design：側欄不另外上色）。
 // 整理頁三個分頁的待處理數字：側欄（電腦）、底部分頁列（手機）、整理頁分頁列共用
+// 剛開 App 時先讓首頁拿到資料，再算這三個數字：它們都要重算整個典藏，和首頁同時算時會互相搶 CPU，
+// 手機實測首頁從約 0.7 秒被拖到 3 秒（2026-11-18）。首頁到了（markFirstScreen）或最多等 2.5 秒就開始，並且一個接一個要。
+let firstScreenDone
+const firstScreen = new Promise(resolve => { firstScreenDone = resolve; setTimeout(resolve, 2500) })
+export const markFirstScreen = () => firstScreenDone()
+
 export function useTidyCounts(refreshKey) {
   const [counts, setCounts] = useState({})
   useEffect(() => {
     let live = true
     const set = (key, value) => { if (live) setCounts(current => ({ ...current, [key]: value })) }
-    api('/duplicates').then(result => set('duplicates', result.groups.length)).catch(() => {})
-    api('/attention/summary').then(result => set('attention', result.total)).catch(() => {})
-    api('/tags/suggestions').then(result => set('rules', result.total)).catch(() => {})
+    firstScreen
+      .then(() => live && api('/duplicates').then(result => set('duplicates', result.groups.length)).catch(() => {}))
+      .then(() => live && api('/attention/summary').then(result => set('attention', result.total)).catch(() => {}))
+      .then(() => live && api('/tags/suggestions').then(result => set('rules', result.total)).catch(() => {}))
     return () => { live = false }
   }, [refreshKey])
   return counts
@@ -69,6 +76,12 @@ export default function Sidebar({ variant, onToggle, page, goTo, openById, onSho
   const [moreReading, setMoreReading] = useState(false)
   const [moreRecent, setMoreRecent] = useState(false)
   const mini = variant === 'mini'
+  // 繼續閱讀、待整理等區塊要等資料回來才知道有沒有，一個個冒出來會把下面的內容往下擠；全部到齊（最多等 1.5 秒）再一次顯示
+  const [listsDone, setListsDone] = useState(false)
+  const [statusDone, setStatusDone] = useState(false)
+  const [waited, setWaited] = useState(false)
+  useEffect(() => { const timer = setTimeout(() => setWaited(true), 1500); return () => clearTimeout(timer) }, [])
+  const settled = waited || (listsDone && statusDone && Object.keys(tidyCounts).length >= 3)
 
   useEffect(() => {
     let live = true
@@ -84,12 +97,12 @@ export default function Sidebar({ variant, onToggle, page, goTo, openById, onSho
       setReading(inProgress.items)
       const shown = new Set([...inProgress.items, ...pending].map(item => item.id))
       setRecent(opened.items.filter(item => !shown.has(item.id)).slice(0, RECENT_LONG))
-    }).catch(() => {})
+    }).catch(() => {}).finally(() => { if (live) setListsDone(true) })
     return () => { live = false }
   }, [refreshKey])
 
   useEffect(() => {
-    const refresh = () => api('/system/status').then(setStatus).catch(() => {})
+    const refresh = () => api('/system/status').then(setStatus).catch(() => {}).finally(() => setStatusDone(true))
     refresh()
     const timer = setInterval(refresh, 30000)
     return () => clearInterval(timer)
@@ -138,7 +151,7 @@ export default function Sidebar({ variant, onToggle, page, goTo, openById, onSho
       {masthead}
       <nav className="nav-pages">{PAGES.map(([id, icon, label]) => <button key={id} type="button" className={page === id ? 'is-active' : ''} aria-current={page === id ? 'page' : undefined} onClick={pick(goTo).bind(null, id)}><i aria-hidden="true">{icon}</i>{label}</button>)}</nav>
 
-      <div className="nav-scroll">
+      <div className={`nav-scroll${settled ? '' : ' is-pending'}`}>
         <section className="nav-section">
           <h2><button type="button" className="nav-heading" onClick={pick(onShowList).bind(null, 'reading')} title="在書庫列出所有閱讀中的作品">繼續閱讀<span aria-hidden="true">›</span></button></h2>
           {reading.length ? <ul className="nav-reading">{readingShown.map(item => <li key={item.id}>
@@ -208,7 +221,7 @@ export default function Sidebar({ variant, onToggle, page, goTo, openById, onSho
         </section>
       </div>
 
-      <div className="nav-bottom">
+      <div className={`nav-bottom${settled ? '' : ' is-pending'}`}>
         {progressLine && <ProgressStrip line={progressLine} variant="full" onOpen={pick(onAttention)} />}
         <button type="button" className="for-keyboard" onClick={pick(onPalette)}><i aria-hidden="true">⌕</i>指令面板<kbd>Ctrl K</kbd></button>
         <button type="button" onClick={pick(onBackup)}><i aria-hidden="true">↧</i>備份中心</button>

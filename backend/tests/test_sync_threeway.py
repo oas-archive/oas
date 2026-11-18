@@ -111,7 +111,7 @@ def test_conflict_stops_without_writing(tmp_path):
     output = sync(tmp_path, data_dir, rows, expect=2)
     assert "站A / a｜rating｜基準 1.0｜電腦 5.0｜手機 3.0" in output and "沒有寫入" in output
     assert "秘密標題" not in output
-    assert (data_dir / "oas.db").read_bytes() == before and not list(tmp_path.glob("pc-before-sync-*.db"))
+    assert (data_dir / "oas.db").read_bytes() == before and not list(tmp_path.rglob("pc-before-sync-*.db"))
     preview = sync(tmp_path, data_dir, rows, apply=False, expect=2)  # 預演也停下並列出
     assert "衝突 1 個" in preview
 
@@ -150,7 +150,7 @@ def test_phone_delete_deletes_on_pc(tmp_path):
     data_dir, engine = setup(tmp_path, {"a": {}, "b": {}})
     output = sync(tmp_path, data_dir, [pe("a")])
     assert "手機刪除 1" in output and "手機刪除、電腦也會刪 1 件" in output and set(state(engine)) == {"a"}
-    assert list(tmp_path.glob("pc-before-sync-*.db"))  # 刪掉的可以從同步前的副本復原
+    assert list(tmp_path.glob("backups/手機/寫入前/pc-before-sync-*.db"))  # 刪掉的可以從同步前的副本復原
 
 
 def test_delete_versus_edit_is_a_conflict(tmp_path):

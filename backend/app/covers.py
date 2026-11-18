@@ -332,6 +332,20 @@ def _android() -> bool:
     return settings.IMAGE_ENGINE == "android"
 
 
+def _android_webp(path: Path) -> bool:
+    """手機個人版：Pillow（Chaquopy）沒有編進 WebP，這種檔案改交給 Android 內建解碼器。電腦與公開版不走這裡。"""
+    if settings.PLATFORM != "android" or _android():
+        return False
+    from PIL import features
+
+    if features.check("webp"):
+        return False
+    try:
+        return imaging.sniff(path) == "WEBP"
+    except OSError:
+        return False
+
+
 def _thumb_format() -> tuple[str, str, str]:
     """（Pillow 格式、副檔名、媒體類型）。手機（Chaquopy）的 Pillow 沒有編進 WebP，存檔會失敗，改存 JPEG。"""
     if _android():
@@ -342,9 +356,23 @@ def _thumb_format() -> tuple[str, str, str]:
     return ("WEBP", "webp", "image/webp") if features.check("webp") else ("JPEG", "jpg", "image/jpeg")
 
 
+@functools.cache
+def _draft_safe() -> bool:
+    """Pillow 13 以前，JPEG 以縮小比例解碼（draft）時可能寫出緩衝區之外（Pillow 13.0.0 修正，編號見已知狀況）。
+    電腦是 13.x 照用；手機個人版的 Chaquopy 最新只有 11.0.0，就不用 draft，改成整張解碼再縮（慢一點、比較安全）。"""
+    from PIL import __version__
+
+    return int(__version__.split(".")[0]) >= 13
+
+
+def _draft(image, mode: str, size: tuple[int, int]) -> None:
+    if _draft_safe():
+        image.draft(mode, size)
+
+
 def image_ratio(path: Path) -> float | None:
     """高 / 寬；只讀檔頭，不解碼整張圖。"""
-    if _android():
+    if _android() or _android_webp(path):
         return imaging.ratio(path)
     try:
         from PIL import Image
@@ -362,13 +390,13 @@ def image_colour(path: Path) -> str:
     以小尺寸量化成 8 色，依「佔比 × 彩度」挑選，避開近黑、近白與灰階背景；
     最後把明度與彩度收斂到深色介面上看得清楚、又不刺眼的範圍。
     """
-    if _android():
+    if _android() or _android_webp(path):
         return imaging.colour(path)
     try:
         from PIL import Image
 
         with open_image(path) as image:
-            image.draft("RGB", (96, 96))  # JPEG 直接以縮小比例解碼，速度快很多
+            _draft(image, "RGB", (96, 96))  # JPEG 直接以縮小比例解碼，速度快很多
             image.seek(0)
             small = image.convert("RGB")
             small.thumbnail((72, 72))
@@ -386,13 +414,13 @@ def image_fingerprint(path: Path) -> str:
     同一張圖即使重新壓縮、縮放或換了網址，雜湊也只差幾個位元，用來找出封面一樣的重複作品。
     回傳 16 位十六進位；無法讀圖時回傳空字串。
     """
-    if _android():
+    if _android() or _android_webp(path):
         return imaging.fingerprint(path)
     try:
         from PIL import Image
 
         with open_image(path) as image:
-            image.draft("L", (64, 64))
+            _draft(image, "L", (64, 64))
             image.seek(0)
             pixels = list(image.convert("L").resize((9, 8), Image.Resampling.LANCZOS).tobytes())
     except Exception:
@@ -415,8 +443,38 @@ def backfill_colours() -> int:
                 if updated % 50 == 0:
                     db.commit()
             db.commit()
+        updated += _retry_android_webp()
     except Exception:  # 補色只是錦上添花；失敗時下次啟動再試
         pass
+    return updated
+
+
+WEBP_RETRY_PAUSE = 0.2  # 每張之間休息，手機不要一次解很多張
+WEBP_RETRY_BATCH = 20  # 每批 20 張就存檔
+
+
+def _retry_android_webp() -> int:
+    """手機個人版：以前 Pillow 讀不了 WebP 而留下空白的比例、主色、指紋，改用 Android 解碼器補算。其他平台不做。"""
+    updated = 0
+    with SessionLocal() as db:
+        entries = db.scalars(select(CoverCache).where(
+            CoverCache.status == "ok", CoverCache.content_type == "image/webp",
+            CoverCache.ratio.is_(None) | (CoverCache.colour == "") | (CoverCache.fingerprint == ""))).all()
+        for entry in entries:
+            path = cover_file(entry)
+            if not _android_webp(path):
+                return updated  # 這個環境不需要（電腦、公開版，或 Pillow 本來就讀得了）
+            if entry.ratio is None:
+                entry.ratio = image_ratio(path) or None
+            if not entry.colour:
+                entry.colour = image_colour(path)
+            if not entry.fingerprint:
+                entry.fingerprint = image_fingerprint(path)
+            updated += 1
+            if updated % WEBP_RETRY_BATCH == 0:
+                db.commit()
+            time.sleep(WEBP_RETRY_PAUSE)
+        db.commit()
     return updated
 
 
@@ -475,6 +533,12 @@ def thumbnail_file(entry: CoverCache, width: int) -> tuple[Path, str]:
                 return original, entry.content_type
             temporary.replace(target)
             return target, media_type
+        if _android_webp(original):  # Pillow 讀不了的 WebP：縮圖用 Android 解碼，存成這裡約定的 JPEG
+            if not imaging.make_thumbnail(original, temporary, width, jpeg=True):
+                _thumb_failed.add((entry.url_hash, width))
+                return original, entry.content_type
+            temporary.replace(target)
+            return target, media_type
         from PIL import Image
 
         with open_image(original) as image:
@@ -482,7 +546,7 @@ def thumbnail_file(entry: CoverCache, width: int) -> tuple[Path, str]:
                 _thumb_failed.add((entry.url_hash, width))  # 原圖夠小，不必再開檔判斷
                 return original, entry.content_type
             image.seek(0)  # 動態 GIF 只取第一格
-            image.draft("RGB", (width, width * 3))  # JPEG 直接以小尺寸解碼，快很多
+            _draft(image, "RGB", (width, width * 3))  # JPEG 直接以小尺寸解碼，快很多
             converted = image.convert("RGBA" if image.mode in ("RGBA", "LA", "P") else "RGB")
             converted.thumbnail((width, width * 3))
             if kind == "JPEG" and converted.mode == "RGBA":  # JPEG 沒有透明：鋪在深色底上，和畫面底色相近

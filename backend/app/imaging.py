@@ -1,6 +1,6 @@
 """封面解碼：取色與指紋的共用算法，以及用 Android 內建解碼器的做法（手機公開版，OAS_IMAGE_ENGINE=android）。
 
-電腦版與個人版繼續用 Pillow，程式在 covers.py。這個檔案不能 import Pillow：公開版的 APK 沒有帶。
+電腦版與個人版繼續用 Pillow，程式在 covers.py；手機個人版的 Pillow 沒有 WebP，遇到 WebP 才改用這裡。這個檔案不能 import Pillow：公開版的 APK 沒有帶。
 封面來自任何網站，所以解碼前先做三件事：看檔頭只放行常見格式（不信任副檔名）、PNG 擋下超大的附加區塊、
 記下正在處理哪一張。解碼器讓 App 當掉時，下次啟動就知道是哪一張，兩次之後不再碰它，改由網頁直接顯示原圖。
 """
@@ -179,7 +179,7 @@ def _decoding(path: Path):
 
 
 def _decoder():
-    """Android 的解碼器（android/app/src/public/java/.../CoverDecoder.java）。"""
+    """Android 的解碼器（android/app/src/main/java/.../CoverDecoder.java）。"""
     from java import jclass
 
     return jclass("io.github.oasarchive.oas.CoverDecoder")
@@ -235,7 +235,7 @@ def thumbnail_extension() -> str:
     return _decoder().thumbnailExtension()
 
 
-def make_thumbnail(source: Path, target: Path, width: int) -> bool:
+def make_thumbnail(source: Path, target: Path, width: int, jpeg: bool = False) -> bool:
     """做好存到 target 回傳 True；原圖已經夠小回傳 False。做不出來丟例外，由 covers.py 改用原圖。"""
     _accept(source)
     with _decoding(source):
@@ -243,5 +243,8 @@ def make_thumbnail(source: Path, target: Path, width: int) -> bool:
         original_width, _height = decoder.size(str(source))
         if original_width <= width:
             return False
-        decoder.thumbnail(str(source), str(target), width)
+        if jpeg:
+            decoder.thumbnail(str(source), str(target), width, True)
+        else:
+            decoder.thumbnail(str(source), str(target), width)
     return True

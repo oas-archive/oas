@@ -76,7 +76,7 @@ def import_urls(payload: ImportInput, db: Session = Depends(db_session)):
 @router.get("/attention")
 def attention_list(db: Session = Depends(db_session)):
     """待整理的作品：可以重試、要手動補、來源失效三組。"""
-    return attention.attention(db)
+    return cache.cached("attention", lambda: attention.attention(db), copied=False)  # 只讀；資料沒變時不重算（手機約 0.7 秒）
 
 
 @router.get("/attention/summary")

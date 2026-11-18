@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
-from .. import duplicates as duplicates_module, explore as explore_module, insights, metadata
+from .. import cache, duplicates as duplicates_module, explore as explore_module, insights, metadata
 from ..archive import STATUSES, serialise
 from ..database import DuplicateDismissal, Resource, Tag
 from ..deps import db_session
@@ -53,7 +53,8 @@ def dashboard(db: Session = Depends(db_session)):
 
 @router.get("/explore")
 def explore(seed: int = Query(default=0, ge=0), db: Session = Depends(db_session)):
-    return explore_module.explore(db, seed=seed)
+    # 資料沒變時重用（每次要 0.3 秒，手機約 0.8 秒）；鍵含日期：「久未翻閱」以 180 天為界
+    return cache.cached(("explore", seed, datetime.now(timezone.utc).date().isoformat()), lambda: explore_module.explore(db, seed=seed), copied=False)
 
 
 @router.get("/home")
@@ -64,12 +65,12 @@ def home(seed: int = Query(default=0, ge=0), personal: bool = False, db: Session
 
 @router.get("/insights/taste")
 def taste_map(db: Session = Depends(db_session)):
-    return insights.taste_map(db)
+    return cache.cached("taste-map", lambda: insights.taste_map(db), copied=False)  # 只讀；資料沒變時不重算（手機約 1.1 秒）
 
 
 @router.get("/insights/tags")
 def tag_health(db: Session = Depends(db_session)):
-    return insights.tag_health(db)
+    return cache.cached("tag-health", lambda: insights.tag_health(db), copied=False)
 
 
 @router.post("/insights/tags/keep-pairs")
@@ -124,4 +125,5 @@ def undismiss_duplicates(payload: UndismissInput, db: Session = Depends(db_sessi
 @router.get("/stats")
 def statistics(tz: int = Query(default=0, ge=-840, le=840), db: Session = Depends(db_session)):
     """tz：使用者所在時區比 UTC 快幾分鐘，每月與今年的數字照這個時區算。"""
-    return insights.stats(db, tz)
+    today = (datetime.now(timezone.utc) + timedelta(minutes=tz)).date().isoformat()  # 每月、今年的數字跟著使用者的日期換
+    return cache.cached(("stats", tz, today), lambda: insights.stats(db, tz), copied=False)

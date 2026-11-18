@@ -8,7 +8,7 @@ import { canReadPages, resumeReads, scheduleJmCheck } from './pageReader.js'
 import { useProgressLine } from './progress.js'
 import { isPublic } from './preferences.js'
 import Showcase, { playShowcaseClose } from './Showcase.jsx'
-import Sidebar, { BottomTabs, PAGES, ProgressStrip, useTidyCounts } from './Sidebar.jsx'
+import Sidebar, { BottomTabs, PAGES, ProgressStrip, markFirstScreen, useTidyCounts } from './Sidebar.jsx'
 import StatsView from './StatsView.jsx'
 import FilterSheet, { ListTypeDialog, SmartDialog } from './FilterSheet.jsx'
 import {
@@ -54,6 +54,12 @@ export default function ImmersiveApp() {
   const urlState = useRef(new URLSearchParams(window.location.search)).current
   const [items, setItems] = useState([])
   const [dashboard, setDashboard] = useState(null)
+  // 狀態分頁（暫時擱置、棄坑）要等首頁數字回來才知道有沒有；記住上次有哪幾個，一開始就排好，分頁才不會在載入後重新分寬度
+  const [seenStates] = useState(() => { try { return JSON.parse(localStorage.getItem('oas-status-seen') || '[]') } catch { return [] } })
+  useEffect(() => {
+    if (!dashboard?.status_counts) return
+    try { localStorage.setItem('oas-status-seen', JSON.stringify(STATES.filter(value => !MAIN_STATES.includes(value) && dashboard.status_counts[value]))) } catch { /* 只影響下次載入的排版 */ }
+  }, [dashboard])
   useEffect(migrateKeptPairs, [])
   const [query, setQuery] = useState(() => urlState.get('q') || '')
   const [state, setState] = useState(() => urlState.get('status') || '')
@@ -504,7 +510,9 @@ export default function ImmersiveApp() {
     return params.toString()
   }
   const hasFilters = Boolean(query || state || source || kind || format || selectedTags.length || excludedTags.length || deadOnly || unratedOnly)
-  const showDeepStrip = navVariant !== 'phone' && dashboard?.deep_dive && !query && !source && !kind && !format && !selectedTags.length && !excludedTags.length && !deadOnly && !unratedOnly && !batch && !activeCollection && !activeSmart
+  const stripFilters = !query && !source && !kind && !format && !selectedTags.length && !excludedTags.length && !deadOnly && !unratedOnly && !batch && !activeCollection && !activeSmart
+  const showDeepStrip = navVariant !== 'phone' && dashboard?.deep_dive && stripFilters
+  const holdDeepStrip = navVariant !== 'phone' && !dashboard && stripFilters  // 首頁數字還沒回來：先留出深潛帶的位置，來了作品清單才不會往下跳
   const clearFilters = () => { setQuery(''); setState(''); setSource(''); setKind(''); setFormat(''); setSelectedTags([]); setExcludedTags([]); setDeadOnly(false); setUnratedOnly(false) }
   // 已套用的條件：全部列在同一處，每一項都能直接移除
   const applied = [
@@ -517,7 +525,7 @@ export default function ImmersiveApp() {
     ...selectedTags.map(tag => ({ key: `tag-${tag}`, label: `#${tag}`, remove: () => toggleTag(tag) })),
     ...excludedTags.map(tag => ({ key: `not-${tag}`, label: `不要 #${tag}`, excluded: true, remove: () => setExcludedTags(current => current.filter(value => value !== tag)) })),
   ].filter(Boolean)
-  const statusTabs = ['', ...STATES.filter(value => MAIN_STATES.includes(value) || value === state || dashboard?.status_counts?.[value])]
+  const statusTabs = ['', ...STATES.filter(value => MAIN_STATES.includes(value) || value === state || (dashboard ? dashboard.status_counts?.[value] : seenStates.includes(value)))]
   const filterCount = selectedTags.length + excludedTags.length + (kind ? 1 : 0) + (format ? 1 : 0) + (source ? 1 : 0)
   const smartDirty = Boolean(activeSmart) && filterSearch() !== activeSmart.query
   const applySearch = search => {
@@ -681,6 +689,7 @@ export default function ImmersiveApp() {
           {collections.map(collection => { const active = (activeCollection || activeSmart)?.id === collection.id; return <button key={collection.id} type="button" className={active ? 'is-active' : undefined} aria-pressed={active} onClick={() => openCollection(active ? null : collection)}><i aria-hidden="true">{collection.query ? '⌕' : '▤'}</i>{collection.name}<small>{collection.count}</small></button> })}
           <button type="button" className="is-add" onClick={() => setSmartDialog('choose')}>＋ 新增書單</button>
         </section>}
+        {holdDeepStrip && <div className="deep-strip-slot" aria-hidden="true" />}
         {showDeepStrip && <DeepStrip seed={dashboard.deep_dive} paused={Boolean(selected)} onOpen={open} />}
         <section className="gallery-heading"><h2>{activeCollection ? `書單：${activeCollection.name}` : activeSmart ? `智慧書單：${activeSmart.name}` : '全部作品'}{activeCollection && (navVariant === 'phone' ? <span className="smart-actions"><button type="button" onClick={() => setSmartDialog('rename')}>改名</button><button type="button" onClick={removeManual}>刪除</button><button type="button" onClick={() => setActiveCollection(null)}>離開</button></span> : <button type="button" className="query-chip" onClick={() => setActiveCollection(null)} title="回到全部典藏">離開書單 ×</button>)}{activeSmart && <span className="smart-actions"><button type="button" onClick={() => setSmartDialog('rename')}>改名</button><button type="button" onClick={removeSmart}>刪除</button><button type="button" onClick={leaveSmart} title="回到全部典藏">離開</button></span>}</h2>
           <div className="gallery-tools"><span>{total > items.length ? `顯示 ${items.length} / ${total} 件` : `${items.length} 件`}</span>{!batch && <span className="gallery-hint">懸停封面可直接評分，或按 1–5</span>}
@@ -898,6 +907,7 @@ function HomeView({ onOpen, onHover, onQuick, onTag, onShowList, onCollection, c
       const kept = showing ? result.hero.findIndex(entry => entry.id === showing) : -1
       if (kept >= 0 && kept !== homeHeroIndex) { heroJump.current = true; setHeroIndex(kept) }
       setData(result)
+      markFirstScreen()  // 首頁到了：側欄、底部分頁的整理件數才開始算
     }).catch(error => live && notify(errorNote(error))).finally(() => live && setLoading(false))
     return () => { live = false }
   }, [seed, version, changes, personal])  // version：復原、還原備份後重新載入；changes：新增、修改作品後在背景更新；personal：手機直放橫放跨過寬度門檻
@@ -988,7 +998,7 @@ function HomeView({ onOpen, onHover, onQuick, onTag, onShowList, onCollection, c
               </div>
             </div>
             <button type="button" className="home-hero-cover cover" data-cover-id={current ? item.id : undefined} onClick={() => onOpen(item, data.hero)} aria-label={`查看 ${titleFor(item)}`} style={{ '--ratio': isFaceCover(item) ? 1.15 : coverRatio(item) }}>
-              {isFaceCover(item) ? <CoverFace item={item} /> : <img src={coverSrc(item, 480)} srcSet={`${coverSrc(item, 480)} 480w, ${coverSrc(item)} 1000w`} sizes="(max-width: 780px) 86vw, 420px" alt="" decoding="async" onError={hideBroken} />}
+              {isFaceCover(item) ? <CoverFace item={item} /> : <img src={coverSrc(item, 480)} srcSet={`${coverSrc(item, 480)} 480w, ${coverSrc(item)} 1000w`} sizes="(max-width: 780px) 86vw, 420px" alt="" decoding="async" fetchPriority={current ? 'high' : undefined} onError={hideBroken} />}
             </button>
           </div>
         })}

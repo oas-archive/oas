@@ -16,6 +16,7 @@ from functools import lru_cache
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
+from . import cache
 from .archive import resolve_alias, tag_rules
 from .database import Resource, SessionLocal, Tag, resource_tags
 from .titles import short_title
@@ -80,7 +81,14 @@ def _short_folded(title: str) -> str:
 
 
 def _docs(db: Session, ids: set[int] | None = None) -> list[_Doc]:
-    """只讀比對要用的欄位（不載入整個作品物件），摺疊結果與短標題用快取，典藏幾千件每次只要幾十毫秒。"""
+    """比對用的資料；資料沒變時重用（cache 的資料版本）。原本每次搜尋都重讀 1.4 萬筆標籤關聯，清單、搜尋建議各花一百多毫秒。
+    回傳的 _Doc 只讀不改，所以不複製。"""
+    docs = cache.cached("search-docs", lambda: _build_docs(db), copied=False)
+    return docs if ids is None else [doc for doc in docs if doc.id in ids]
+
+
+def _build_docs(db: Session) -> list[_Doc]:
+    """只讀比對要用的欄位（不載入整個作品物件），摺疊結果與短標題用快取。"""
     names: dict[int, list[str]] = {}
     for resource_id, name in db.execute(select(resource_tags.c.resource_id, Tag.name).join(Tag, Tag.id == resource_tags.c.tag_id)):
         names.setdefault(resource_id, []).append(_fold_cached(name))
@@ -88,7 +96,7 @@ def _docs(db: Session, ids: set[int] | None = None) -> list[_Doc]:
     return [
         _Doc(row.id, row.updated_at.timestamp() if row.updated_at else 0, _fold_cached(row.code or ""), _fold_cached(row.title or ""),
              _short_folded(row.title or ""), names.get(row.id, []), _fold_cached(row.source_name or ""), _fold_cached(row.note or ""))
-        for row in rows if ids is None or row.id in ids
+        for row in rows
     ]
 
 

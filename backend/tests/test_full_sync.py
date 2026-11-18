@@ -347,7 +347,7 @@ def test_pull_phone_covers(tmp_path):
     output = run_tool("pull_phone_covers.py", phone_dir / "oas.db", folder, "--apply", data_dir=data_dir)
     assert "複製了 2 個檔案" in output
     assert (data_dir / "covers" / "missing.jpg").read_bytes() == b"new" and (data_dir / "covers" / "have.jpg").read_bytes() == b"old"
-    assert list(tmp_path.glob("phone/pc-before-covers-*.db"))
+    assert list(tmp_path.glob("backups/手機/寫入前/pc-before-covers-*.db"))  # 固定位置，不放手機副本旁
     with Session(pc) as db:
         rows = {row.url: row for row in db.query(CoverCache).all()}
     recovered = rows[urls["failed"]]

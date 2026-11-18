@@ -47,6 +47,34 @@ def test_old_database_gets_the_columns_and_restarts_are_harmless():
         assert row.title == "舊作品" and row.pages is None and row.format == ""
 
 
+
+def test_adding_columns_twice_at_the_same_time_is_harmless():
+    """兩條執行緒同時補欄位（例如啟動重疊）不會撞到 duplicate column name。"""
+    import threading
+
+    from app.database import _add_missing_columns
+
+    Base.metadata.drop_all(engine)
+    initialise_database()
+    with engine.begin() as connection:
+        connection.execute(text("ALTER TABLE resources DROP COLUMN pages"))
+    errors = []
+
+    def run():
+        try:
+            _add_missing_columns()
+        except Exception as error:  # noqa: BLE001
+            errors.append(error)
+    threads = [threading.Thread(target=run) for _ in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert errors == []
+    with engine.connect() as connection:
+        assert "pages" in {row[1] for row in connection.execute(text("PRAGMA table_info(resources)"))}
+
+
 # ---------- 解析 ----------
 
 def test_parsers_read_pages_only_when_the_page_has_them():

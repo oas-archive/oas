@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import or_, select
 
-from . import refresh, scheduler
+from . import cache, refresh, scheduler
 from .covers import CoverError, check_url, safe_urlopen
 from .database import Resource, SessionLocal, Source
 from .metadata import PROTECTED_HOSTS, SITE_KIND, USER_AGENT
@@ -75,6 +75,8 @@ def _mark(resource_id: int, dead: bool) -> None:
         values = {"link_checked_at": datetime.now(timezone.utc), "updated_at": resource.updated_at}
         if dead:
             values["link_dead"] = True
+        else:
+            cache.quiet(db)  # 只記巡檢時間：不影響任何畫面，快取不必重算
         db.execute(Resource.__table__.update().where(Resource.id == resource_id).values(**values))
         db.commit()
 

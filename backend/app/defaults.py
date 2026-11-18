@@ -87,21 +87,38 @@ def load_packs(paths: list[Path] | None = None) -> tuple[dict[str, str], set[str
     return aliases, blocked - set(aliases)
 
 
-def _tags_named(db: Session, name: str) -> list[Tag]:
-    """名稱（不分大小寫）等於 name 的標籤；同義詞與封鎖清單都不分大小寫。"""
-    return [tag for tag in db.scalars(select(Tag)).all() if tag.name.lower() == name]
+class _TagNames:
+    """名稱（不分大小寫）→ 標籤編號，給 sync_packs 用：原本每個條目都載入全部標籤（890 條 × 2 千多個標籤），
+    翻譯包每新增 100 條啟動就多等約 1.5 秒。改成只讀一次（編號、名稱），標籤有變動（合併、刪除）才重讀。
+    比對用 Python 的 lower()，和同義詞、封鎖清單一致（SQLite 的 lower() 只處理英文字母）。"""
+
+    def __init__(self, db: Session):
+        self.db, self.index = db, None
+
+    def named(self, name: str) -> list[Tag]:
+        """名稱（不分大小寫）等於 name 的標籤；同義詞與封鎖清單都不分大小寫。"""
+        if self.index is None:
+            self.index = {}
+            for tag_id, tag_name in self.db.execute(select(Tag.id, Tag.name)):
+                self.index.setdefault(tag_name.lower(), []).append(tag_id)
+        return [tag for tag in (self.db.get(Tag, tag_id) for tag_id in self.index.get(name, ())) if tag is not None]
+
+    def changed(self) -> None:
+        self.index = None
 
 
-def _merge_into(db: Session, alias: str, target: str) -> int:
+def _merge_into(db: Session, names: _TagNames, alias: str, target: str) -> int:
     """把名為 alias 的既有標籤併入 target（insights.merge_tag：直接寫關聯表，不動作品的修改時間）；回傳併了幾個標籤。"""
     from .insights import merge_tag
 
     merged = 0
-    for tag in _tags_named(db, alias):
+    for tag in names.named(alias):
         if tag.name != target:
             merge_tag(db, tag.name, target)
             db.flush()
             merged += 1
+    if merged:
+        names.changed()
     return merged
 
 
@@ -116,6 +133,7 @@ def sync_packs(db: Session, paths: list[Path] | None = None) -> dict:
     records = {entry.alias: entry for entry in db.scalars(select(PackEntry)).all()}
     aliases, blocked = tag_rules(db)
     counts = {"aliases": 0, "updated": 0, "blocked": 0, "merged": 0, "removed": 0}
+    names = _TagNames(db)
 
     def record(alias: str, kind: str, canonical: str = "", applied: str = "") -> None:
         entry = records.get(alias)
@@ -134,7 +152,7 @@ def sync_packs(db: Session, paths: list[Path] | None = None) -> dict:
                 db.get(TagAlias, alias).canonical = target
                 db.flush()
                 if entry.applied.lower() not in blocked:
-                    counts["merged"] += _merge_into(db, entry.applied.lower(), target)
+                    counts["merged"] += _merge_into(db, names, entry.applied.lower(), target)
                 counts["updated"] += 1
                 aliases, blocked = tag_rules(db)
                 record(alias, "translate", canonical, target)
@@ -148,7 +166,7 @@ def sync_packs(db: Session, paths: list[Path] | None = None) -> dict:
             aliases[alias] = target
             counts["aliases"] += 1
             if target.lower() not in blocked:
-                merged = _merge_into(db, alias, target)
+                merged = _merge_into(db, names, alias, target)
                 if merged:
                     counts["merged"] += merged
                     aliases, blocked = tag_rules(db)
@@ -166,11 +184,14 @@ def sync_packs(db: Session, paths: list[Path] | None = None) -> dict:
             db.add(TagBlock(name=name))
             blocked.add(name)
             counts["blocked"] += 1
-            for tag in _tags_named(db, name):
+            removed = names.named(name)
+            for tag in removed:
                 db.execute(delete(resource_tags).where(resource_tags.c.tag_id == tag.id))  # 直接寫關聯表，不動作品的修改時間
                 db.delete(tag)
                 counts["removed"] += 1
             db.flush()
+            if removed:
+                names.changed()
         record(name, "block")
     db.commit()
     return counts
