@@ -1,5 +1,4 @@
-"""請求層級的防護：跨來源設定、主機名稱限制、擋下其他網站送來的寫入請求、手機版的通行碼、安全標頭。"""
-import hmac
+"""請求層級的防護：跨來源設定、主機名稱限制、擋下其他網站送來的寫入請求、安全標頭。登入與通行碼在 access.py（共用驗證層）。"""
 import re
 from urllib.parse import urlsplit
 
@@ -7,11 +6,10 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse, Response
 
-from . import settings
+from . import access, devices, settings
 
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 HOST_HEADER = re.compile(r"([a-z0-9.-]+)(?::\d{1,5})?", re.I)
-OPEN_PATHS = {"/api/health"}  # 手機版不用通行碼的路徑：App 等服務就緒時用
 # 網頁只跑自己的程式、只連自己的 API，圖片也只准本機：所有版本的封面與預覽都由後端抓（covers.stored_cover、covers.remote_image），
 # 畫面不直接連外部網站。外部網址可以轉址回手機上的其他埠，瀏覽器會帶著通行碼 cookie 跟過去。style 要 unsafe-inline：畫面有用 style 屬性。
 def content_security_policy() -> str:
@@ -30,8 +28,15 @@ SECURITY_HEADERS = {
 # 電腦版的啟動畫面（tools/starting.html）是 file:// 頁面，等服務就緒時用 no-cors 的 fetch 探測。
 # 上面的 CORP same-origin 會讓瀏覽器擋下這種跨來源回應（ERR_BLOCKED_BY_RESPONSE.NotSameOrigin），啟動畫面就永遠不會跳轉，
 # 所以只有這個路徑改成 cross-origin：回應是空的 204、不經過資料庫、不在 /api 底下，其他網站最多只能知道「典藏館正在執行」。
-# 手機版仍要通行碼（不在 OPEN_PATHS），沒帶的回 401 且維持 same-origin。
+# 手機版仍要通行碼（不在 access.OPEN_PATHS），沒帶的回 401 且維持 same-origin。
 LAUNCH_PROBE_PATH = "/launch-probe"
+
+
+def _host_allowed(hostname: str) -> bool:
+    """區網模式另外允許私人網段的 IPv4 字面值與這台電腦的名稱（devices.remote_host_allowed）；沒開時只看 ALLOWED_HOSTS。"""
+    if hostname in settings.ALLOWED_HOSTS:
+        return True
+    return devices.remote_active() and devices.remote_host_allowed(hostname)
 
 
 async def reject_unknown_host(request: Request, call_next):
@@ -40,7 +45,7 @@ async def reject_unknown_host(request: Request, call_next):
     不用 TrustedHostMiddleware：它只看第一個冒號之前，「127.0.0.1:8080/x?」這種夾著路徑的標頭也會放行。
     """
     match = HOST_HEADER.fullmatch(request.headers.get("host", ""))
-    if "*" not in settings.ALLOWED_HOSTS and (match is None or match.group(1).lower() not in settings.ALLOWED_HOSTS):
+    if "*" not in settings.ALLOWED_HOSTS and (match is None or not _host_allowed(match.group(1).lower())):
         return PlainTextResponse("Invalid host header", status_code=400)
     return await call_next(request)
 
@@ -115,17 +120,6 @@ async def reject_cross_site_api(request: Request, call_next):
     return await call_next(request)
 
 
-async def require_token(request: Request, call_next):
-    """手機版：除了 OPEN_PATHS，沒有帶正確通行碼 cookie 的請求一律拒絕（擋同一支手機上的其他 App 讀取或清空典藏）。
-
-    路徑要用 scope["path"]（實際路由用的值）；request.url 是用 Host 標頭組出來的，可以被偽造。
-    """
-    if settings.API_TOKEN and request.scope["path"] not in OPEN_PATHS:
-        if not hmac.compare_digest(request.cookies.get(settings.TOKEN_COOKIE, "").encode(), settings.API_TOKEN.encode()):
-            return JSONResponse({"detail": "缺少典藏館的通行碼"}, status_code=401)
-    return await call_next(request)
-
-
 async def add_security_headers(request: Request, call_next):
     response = await call_next(request)
     for name, value in SECURITY_HEADERS.items():
@@ -149,6 +143,6 @@ def install(app: FastAPI) -> None:
     )
     app.middleware("http")(reject_cross_site_writes)
     app.middleware("http")(reject_cross_site_api)  # 健康檢查也套用：只有 App 外殼與啟動器會叫它，都不帶 Sec-Fetch-Site
-    app.middleware("http")(require_token)
+    app.middleware("http")(access.require_access)  # 共用驗證層：手機通行碼（見 access.py）
     app.middleware("http")(reject_unknown_host)  # 後加的在外層：先擋主機名稱
     app.middleware("http")(add_security_headers)  # 最外層：被擋下的回應也要有標頭

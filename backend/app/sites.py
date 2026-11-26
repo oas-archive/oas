@@ -1,6 +1,6 @@
 """程式認得的網站：網址、搜尋頁、簡稱、限流與防護設定都放這裡（解析規則在 site_parsers.py）。
 
-要拿掉某個網站：刪掉這裡與 site_parsers.py 的相關項目，alternatives.py 有用到的也要改；步驟見 docs/架構.md。
+要拿掉某個網站：刪掉這裡與 site_parsers.py 的相關項目，alternatives.py 有用到的也要改。
 其他程式不直接寫網站名稱，tests/test_sites.py 會檢查。
 """
 import re
@@ -30,6 +30,10 @@ TITLE_SUFFIXES = [
 ]
 TITLE_SITE_NAMES = r"Pornhub|SpankBang|XVIDEOS|JKF\b.*|.*捷克論壇|Myself\b.*|FC2成人影音|Netflav|禁漫天堂|紳士漫畫|nhentai|MissAV|Hanime1|Hentai Haven|JAV HD Porn"
 TITLE_NOISE_WORDS = "禁漫天堂"
+
+# 有官方 API 的網站：讀作品資料時改讀 API，不讀作品頁。nhentai 2026-11 改版後作品頁由瀏覽器端產生（還有年齡確認），
+# 伺服器拿到的頁面沒有標題、封面、標籤，頁面註解也請程式改用官方 API（v2，免金鑰，每分鐘 20 次）。
+API_PAGES = ((re.compile(r"^https?://(?:www\.)?nhentai\.net/g/(\d+)", re.I), "https://nhentai.net/api/v2/galleries/{}"),)
 
 # 有防護、伺服器讀不到的網站：背景補資料與來源巡檢都直接略過，請改用「收錄到 OAS」書籤。
 PROTECTED_HOSTS = ("18comic", "jmcomic", "missav")

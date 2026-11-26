@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react'
+import { canWrite } from './access.js'
 import { api, ask, colourFor, coverSrc, hideBroken, shortTitle, titleFor } from './shared.jsx'
 
 export const PAGES = [['home', '⌂', '首頁'], ['gallery', '▦', '書庫'], ['taste', '✦', '口味'], ['tidy', '✓', '整理'], ['stats', '▥', '統計']]
+// 唯讀裝置（區網模式）沒有「整理」：那裡全是修改資料的工具
+export const shownPages = () => canWrite() ? PAGES : PAGES.filter(([id]) => id !== 'tidy')
 const READING_SHORT = 4, READING_LONG = 12, RECENT_SHORT = 5, RECENT_LONG = 12, UNRATED_SHOWN = 3
 
 const sinceText = iso => {
@@ -66,7 +69,8 @@ export function ProgressStrip({ line, variant, onOpen }) {
 export default function Sidebar({ variant, onToggle, page, goTo, openById, onShowList, onPalette, onBackup, onShortcuts, onDuplicates, onAttention, onTagSuggest, tidyCounts, refreshKey, progressLine,
   collections, activeCollection, onCollection, onCreateCollection, onNewSmart, onRenameCollection, onDeleteCollection }) {
   const [reading, setReading] = useState([])
-  const { duplicates: duplicateCount = 0, attention: attentionCount = 0, rules: suggestCount = 0 } = tidyCounts
+  // 唯讀裝置沒有「整理」頁，也就不顯示通往那裡的捷徑
+  const { duplicates: duplicateCount = 0, attention: attentionCount = 0, rules: suggestCount = 0 } = canWrite() ? tidyCounts : {}
   const [recent, setRecent] = useState([])
   const [unrated, setUnrated] = useState({ items: [], total: 0 })
   const [status, setStatus] = useState(null)
@@ -134,7 +138,7 @@ export default function Sidebar({ variant, onToggle, page, goTo, openById, onSho
   if (mini) return <aside className="oas-nav is-mini" aria-label="主要導覽">
     {masthead}
     <nav className="nav-rail">
-      {PAGES.map(([id, icon, label]) => <button key={id} type="button" className={page === id ? 'is-active' : ''} aria-current={page === id ? 'page' : undefined} onClick={() => goTo(id)}><i aria-hidden="true">{icon}</i><span>{label}</span></button>)}
+      {shownPages().map(([id, icon, label]) => <button key={id} type="button" className={page === id ? 'is-active' : ''} aria-current={page === id ? 'page' : undefined} onClick={() => goTo(id)}><i aria-hidden="true">{icon}</i><span>{label}</span></button>)}
       <hr />
       <button type="button" onClick={onToggle} title="展開側欄查看繼續閱讀"><i aria-hidden="true">❯</i><span>繼續閱讀</span>{reading.length > 0 && <b className="nav-badge">{reading.length}</b>}</button>
       {collections.length > 0 && <button type="button" onClick={onToggle} className={activeCollection ? 'is-active' : ''} title="展開側欄查看書單"><i aria-hidden="true">▤</i><span>書單</span></button>}
@@ -142,14 +146,14 @@ export default function Sidebar({ variant, onToggle, page, goTo, openById, onSho
     <div className="nav-rail nav-rail-bottom">
       {progressLine && <ProgressStrip line={progressLine} variant="mini" onOpen={onAttention} />}
       <button type="button" className="for-keyboard" onClick={onPalette}><i aria-hidden="true">⌕</i><span>指令</span></button>
-      <button type="button" onClick={onBackup} title={backupLine}><i aria-hidden="true">↧</i><span>備份</span><b className={`nav-dot ${status?.backup ? 'is-ok' : 'is-warn'}`} aria-label={backupLine} /></button>
+      {onBackup && <button type="button" onClick={onBackup} title={backupLine}><i aria-hidden="true">↧</i><span>備份</span><b className={`nav-dot ${status?.backup ? 'is-ok' : 'is-warn'}`} aria-label={backupLine} /></button>}
     </div>
   </aside>
 
   return <>
     <aside className="oas-nav" aria-label="主要導覽">
       {masthead}
-      <nav className="nav-pages">{PAGES.map(([id, icon, label]) => <button key={id} type="button" className={page === id ? 'is-active' : ''} aria-current={page === id ? 'page' : undefined} onClick={pick(goTo).bind(null, id)}><i aria-hidden="true">{icon}</i>{label}</button>)}</nav>
+      <nav className="nav-pages">{shownPages().map(([id, icon, label]) => <button key={id} type="button" className={page === id ? 'is-active' : ''} aria-current={page === id ? 'page' : undefined} onClick={pick(goTo).bind(null, id)}><i aria-hidden="true">{icon}</i>{label}</button>)}</nav>
 
       <div className={`nav-scroll${settled ? '' : ' is-pending'}`}>
         <section className="nav-section">
@@ -195,7 +199,7 @@ export default function Sidebar({ variant, onToggle, page, goTo, openById, onSho
         </section>}
 
         <section className="nav-section">
-          <h2><span className="nav-heading is-static">書單</span><button type="button" className="nav-add" aria-expanded={Boolean(creating)} onClick={() => setCreating(creating ? false : 'choose')} aria-label="新增書單" title="新增書單">＋</button></h2>
+          <h2><span className="nav-heading is-static">書單</span>{onCreateCollection && <button type="button" className="nav-add" aria-expanded={Boolean(creating)} onClick={() => setCreating(creating ? false : 'choose')} aria-label="新增書單" title="新增書單">＋</button>}</h2>
           <ul className="nav-collections">
             {collections.map(collection => <li key={collection.id} className={activeCollection?.id === collection.id ? 'is-active' : ''}>
               {editing?.id === collection.id ? <form className="nav-edit" onSubmit={submitRename}>
@@ -206,7 +210,7 @@ export default function Sidebar({ variant, onToggle, page, goTo, openById, onSho
                 <button type="button" className="nav-collection" onClick={pick(onCollection).bind(null, activeCollection?.id === collection.id ? null : collection)}>
                   <i aria-hidden="true" title={collection.query ? '智慧書單：依條件自動更新' : undefined}>{collection.query ? '⌕' : '▤'}</i><span>{collection.name}</span><small>{collection.count}</small>
                 </button>
-                <button type="button" className="nav-more" onClick={() => setEditing({ id: collection.id, name: collection.name })} aria-label={`編輯書單 ${collection.name}`}>⋯</button>
+                {onCreateCollection && <button type="button" className="nav-more" onClick={() => setEditing({ id: collection.id, name: collection.name })} aria-label={`編輯書單 ${collection.name}`}>⋯</button>}
               </>}
             </li>)}
           </ul>
@@ -224,7 +228,7 @@ export default function Sidebar({ variant, onToggle, page, goTo, openById, onSho
       <div className={`nav-bottom${settled ? '' : ' is-pending'}`}>
         {progressLine && <ProgressStrip line={progressLine} variant="full" onOpen={pick(onAttention)} />}
         <button type="button" className="for-keyboard" onClick={pick(onPalette)}><i aria-hidden="true">⌕</i>指令面板<kbd>Ctrl K</kbd></button>
-        <button type="button" onClick={pick(onBackup)}><i aria-hidden="true">↧</i>備份中心</button>
+        {onBackup && <button type="button" onClick={pick(onBackup)}><i aria-hidden="true">↧</i>備份中心</button>}
         <button type="button" className="for-keyboard" onClick={pick(onShortcuts)}><i aria-hidden="true">?</i>快捷鍵<kbd>?</kbd></button>
         <p className="nav-status" aria-live="polite">
           <span className={!status ? '' : status.backup ? 'is-ok' : 'is-warn'} title={status?.backup?.name}>{backupLine}</span>
@@ -239,6 +243,6 @@ export default function Sidebar({ variant, onToggle, page, goTo, openById, onSho
 export function BottomTabs({ page, goTo, tidyCounts = {} }) {
   const tidyTotal = (tidyCounts.attention || 0) + (tidyCounts.duplicates || 0) + (tidyCounts.rules || 0)
   return <nav className="bottom-tabs" aria-label="主要頁面">
-    {PAGES.map(([id, icon, label]) => <button key={id} type="button" className={page === id ? 'is-active' : ''} aria-current={page === id ? 'page' : undefined} onClick={() => goTo(id)}><i aria-hidden="true">{icon}</i>{label}{id === 'tidy' && tidyTotal > 0 && <b className="tab-count" aria-label={`${tidyTotal} 項待處理`}>{tidyTotal > 99 ? '99+' : tidyTotal}</b>}</button>)}
+    {shownPages().map(([id, icon, label]) => <button key={id} type="button" className={page === id ? 'is-active' : ''} aria-current={page === id ? 'page' : undefined} onClick={() => goTo(id)}><i aria-hidden="true">{icon}</i>{label}{id === 'tidy' && tidyTotal > 0 && <b className="tab-count" aria-label={`${tidyTotal} 項待處理`}>{tidyTotal > 99 ? '99+' : tidyTotal}</b>}</button>)}
   </nav>
 }

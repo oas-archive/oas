@@ -18,6 +18,7 @@
   .bar span { display: block; width: 40%; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #8c82ff, #d17c9f); animation: slide 1.4s ease-in-out infinite }
   .slow { margin-top: 18px; opacity: 0; transition: opacity .6s; font-size: 12px }
   .slow.show { opacity: 1 }
+  .lan { margin-top: 14px; color: #c9c3ff; font-size: 12px }
   .stalled img, .stalled .bar span { animation: none }
   .stalled .bar span { width: 100%; background: #9fa9c455 }
   @keyframes float { 50% { transform: translateY(-8px) } }
@@ -32,8 +33,17 @@
   <p id="status">啟動本機服務中，完成後會自動進入。</p>
   <div class="bar"><span></span></div>
   <p class="slow" id="slow">第一次開啟要準備執行環境、打包網頁，可能需要一兩分鐘，請稍候。</p>
+  <p class="lan" id="lan" hidden></p>
 </main>
 <script>
+  // 區網模式：啟動器在網址後面加 #lan=IP:埠,…（只接受數字、點、冒號），顯示一行提醒。
+  const lan = /^#lan=([\d.:,]*)$/.exec(location.hash)
+  if (lan) {
+    const where = lan[1].split(',').filter(Boolean).map(item => 'http://' + item + '/').join('、') || '這台電腦的區網 IP'
+    const note = document.getElementById('lan')
+    note.textContent = '區網模式：其他裝置可用 ' + where + ' 連線；關閉典藏館視窗服務就會停止。'
+    note.hidden = false
+  }
   // 這一頁是 file://，探測服務的請求是跨來源的。典藏館的回應都帶 Cross-Origin-Resource-Policy: same-origin，
   // 瀏覽器會擋下（不論服務有沒有就緒都失敗），所以只探測專用的 /launch-probe（後端 security.py 只對它放寬）。
   // 服務尚未就緒時請求會失敗；就緒後（即使是不透明回應）即跳轉。

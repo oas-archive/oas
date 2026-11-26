@@ -1,28 +1,37 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import { isLocalMachine } from './access.js'
 import Maintenance from './Maintenance.jsx'
 import { canReadPages, queueReads, readPage } from './pageReader.js'
 import { kickProgress, useProgress } from './progress.js'
 import { JM_SEARCH, JM_SOURCE } from './sites.js'
+import { isDesktop } from './preferences.js'
+
+// 裝置管理（含 QR 函式庫）只有電腦本機會打開，分開載入
+const DevicesPanel = lazy(() => import('./DevicesPanel.jsx'))
 import { announceRemoved, api, CATEGORY_NAMES, colourFor, CoverFace, coverSrc, Dropdown, hideBroken, isFaceCover, loadTagCategories, STATUS_COLOURS, TAG_CATEGORIES, shortTitle, titleFor, ask, errorNote, imageSrc } from './shared.jsx'
 
 // 「口味」頁看收藏的口味分群；「整理」頁是要動手處理的事（缺資料、重複、標籤、背景維護）
 export const RELATION_TABS = [['taste', '口味地圖']]
-export const TIDY_TABS = [['attention', '待整理'], ['duplicates', '重複作品'], ['tags', '標籤健檢'], ['rules', '標籤規則'], ['maintenance', '維護']]
+export const TIDY_TABS = [['attention', '待整理'], ['duplicates', '重複作品'], ['tags', '標籤健檢'], ['rules', '標籤規則'], ['maintenance', '維護'], ['devices', '其他裝置']]
+// 「其他裝置」（多裝置登入）只在電腦版的本機顯示：手機 App 不開區網模式，其他裝置也不能管理裝置
+export const devicesAvailable = () => isDesktop() && isLocalMachine()
+const shownTidyTabs = () => TIDY_TABS.filter(([id]) => id !== 'devices' || devicesAvailable())
 export const INSIGHT_TABS = [...RELATION_TABS, ...TIDY_TABS]
 export const tabPage = id => TIDY_TABS.some(([tab]) => tab === id) ? 'tidy' : 'taste'
 // 頁面目前顯示的分頁：記住的分頁不屬於這一頁時，顯示這一頁的第一個
-export const shownTab = (page, tab) => { const tabs = page === 'tidy' ? TIDY_TABS : RELATION_TABS; return tabs.some(([id]) => id === tab) ? tab : tabs[0][0] }
+export const shownTab = (page, tab) => { const tabs = page === 'tidy' ? shownTidyTabs() : RELATION_TABS; return tabs.some(([id]) => id === tab) ? tab : tabs[0][0] }
 const CATEGORY_LABEL = CATEGORY_NAMES
 const REASONS = { title: '標題相同', similar_title: '標題相近', url: '網址相同', cover: '封面相同', cover_image: '封面圖片相同' }
 
 // 「口味」與「整理」兩頁共用：page 決定列出哪些分頁（只有一個分頁時不顯示分頁列）
 export default function InsightsView({ page, tab, setTab, onOpenItem, onFilterTags, onPickUnread, onChanged, notify, counts = {}, onBackup }) {
   const label = page === 'tidy' ? '整理' : '口味'
+  const tidyTabs = shownTidyTabs()
   // 手機上長說明只露兩行，點一下展開（樣式見 immersive.css）
   const toggleHint = event => { if (!event.target.closest('a,button,input')) event.target.closest('.insight-head p, .health-block > p')?.classList.toggle('is-open') }
   return <section className="insights" aria-label={label} onClick={toggleHint}>
-    {page === 'tidy' && <div className="filter-row"><nav className="status-rail" role="tablist" aria-label={`${label}分頁`} style={{ '--n': TIDY_TABS.length, '--i': Math.max(0, TIDY_TABS.findIndex(([id]) => id === tab)) }}><i aria-hidden="true" />
-      {TIDY_TABS.map(([id, label]) => <button key={id} type="button" role="tab" aria-selected={tab === id} className={tab === id ? 'is-active' : ''} onClick={() => setTab(id)}><span>{label}</span><b>{counts[id] || ''}</b></button>)}
+    {page === 'tidy' && <div className="filter-row"><nav className="status-rail" role="tablist" aria-label={`${label}分頁`} style={{ '--n': tidyTabs.length, '--i': Math.max(0, tidyTabs.findIndex(([id]) => id === tab)) }}><i aria-hidden="true" />
+      {tidyTabs.map(([id, label]) => <button key={id} type="button" role="tab" aria-selected={tab === id} className={tab === id ? 'is-active' : ''} onClick={() => setTab(id)}><span>{label}</span><b>{counts[id] || ''}</b></button>)}
     </nav></div>}
     {tab === 'taste' && <TasteMap onFilterTags={onFilterTags} onPickUnread={onPickUnread} onOpenItem={onOpenItem} notify={notify} />}
     {tab === 'tags' && <TagHealth onOpenItem={onOpenItem} onChanged={onChanged} notify={notify} />}
@@ -30,6 +39,7 @@ export default function InsightsView({ page, tab, setTab, onOpenItem, onFilterTa
     {tab === 'attention' && <Attention onOpenItem={onOpenItem} onChanged={onChanged} notify={notify} />}
     {tab === 'duplicates' && <Duplicates onOpenItem={onOpenItem} onChanged={onChanged} notify={notify} />}
     {tab === 'maintenance' && <Maintenance notify={notify} reload={onChanged} onBackup={onBackup} />}
+    {tab === 'devices' && devicesAvailable() && <Suspense fallback={<p className="insight-empty">讀取中…</p>}><DevicesPanel notify={notify} /></Suspense>}
   </section>
 }
 

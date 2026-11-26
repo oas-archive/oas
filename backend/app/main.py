@@ -8,6 +8,7 @@
 - library：來源網址規則、備份與還原、封面
 - jobs：收錄、補齊作品資訊、來源巡檢、系統狀態
 - misc：健康檢查、復原、搜尋建議
+- devices：區網模式的配對、裝置管理（只限電腦本機）
 
 直接在電腦上執行時，打包好的網頁（frontend/dist）也由這裡提供（見 frontend.py）。
 """
@@ -22,7 +23,7 @@ from fastapi import FastAPI
 from . import cache, covers, defaults, duplicates, frontend, graph, intake, linkcheck, scheduler, search, security, settings
 from .archive import STATUSES, assign_tags
 from .database import SessionLocal, initialise_database
-from .routers import collections, insights, jobs, library, misc, resources, tags
+from .routers import collections, devices, insights, jobs, library, misc, resources, tags
 
 __all__ = ["app", "assign_tags", "STATUSES"]
 
@@ -75,4 +76,6 @@ app = FastAPI(title="Omni-Archive System API", version=settings.VERSION, lifespa
 security.install(app)
 for module in (misc, resources, collections, tags, insights, library, jobs):
     app.include_router(module.router)
+app.include_router(devices.public)
+app.include_router(devices.router)
 frontend.install(app, settings.FRONTEND_DIR)  # 放在最後：其他路徑才交給網頁

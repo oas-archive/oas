@@ -2,6 +2,9 @@ name: 發布
 
 # 推送 v 開頭的標籤（例如 v0.15.8）時：打包 Windows 免安裝版，建立「草稿」Release。
 # 草稿不公開任何檔案；這個流程只建立草稿、從不公開，維護者另外檢查後才發布。Release 由 github-actions 機器人建立。
+# 有發布手機版時另外打包 Android 公開版，用 GitHub Secrets 裡的正式金鑰簽署：OAS_RELEASE_KEYSTORE_BASE64、OAS_RELEASE_STORE_PASSWORD、
+# OAS_RELEASE_KEY_ALIAS、OAS_RELEASE_KEY_PASSWORD。金鑰只在這次執行的暫存資料夾，結束就刪掉。
+# 沒有登記正式憑證指紋（android/release-cert-sha256.txt）時不打包 Android，直接略過。
 on:
   push:
     tags: ["v*"]
@@ -21,6 +24,8 @@ jobs:
     runs-on: windows-latest
     permissions:
       contents: write  # 建立草稿 Release
+    outputs:
+      android: ${{ steps.android.outputs.build }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -47,13 +52,108 @@ jobs:
         shell: bash
         run: |
           notes="Windows 免安裝版：下載 zip，解壓縮後雙擊「開啟 OAS.cmd」。不需要安裝 Python 或 Node.js。第一次開啟時要確認已滿 18 歲，並選擇封面要不要存在這台電腦。"
+          notes="$notes Android 測試版：下載 APK 安裝（Android 10 以上、arm64），用同名的 .sha256 檔與 README 的憑證指紋核對。"
           # zip 附同名的 .sha256：使用者可以核對下載的檔案，維護者公開前也用它核對
           zip="OAS-${GITHUB_REF_NAME}-windows-x64.zip"
           test -f "dist/$zip" || { echo "::error::找不到 dist/$zip：版本號和標籤不同"; exit 1; }
           (cd dist && sha256sum "$zip" > "$zip.sha256" && cat "$zip.sha256")
           # 只有電腦版時是一般 Release（公開後成為 Latest）
           prerelease=""
+          # 有發布手機版時整個 Release 標成 Pre-release
+          prerelease="--prerelease"
           gh release create "$GITHUB_REF_NAME" "dist/$zip" "dist/$zip.sha256" --draft $prerelease --verify-tag \
             --title "OAS $GITHUB_REF_NAME" \
             --notes "$notes"
+      - name: 要不要打包 Android（有發布手機版、也登記了正式憑證指紋才打包）
+        id: android
+        shell: bash
+        run: |
+          build=false
+          if test -s android/release-cert-sha256.txt; then build=true; fi
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+          echo "打包 Android：$build"
 
+  android:
+    needs: portable
+    if: needs.portable.outputs.android == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # 把 APK 放進草稿 Release
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      # Chaquopy 的 App 內 Python 是 3.11，打包用的 Python 要同一個小版本
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+      - name: 打包網頁
+        working-directory: frontend
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+      - name: 核對 Gradle wrapper（和 Gradle 官方公布的 SHA-256 相同才繼續；在還原簽署金鑰之前）
+        working-directory: android
+        run: |
+          version=$(sed -n 's#^distributionUrl=.*gradle-\([0-9.]*\)-.*\.zip$#\1#p' gradle/wrapper/gradle-wrapper.properties)
+          test -n "$version" || { echo "::error::讀不到 Gradle 版本"; exit 1; }
+          expected=$(curl -fsSL "https://services.gradle.org/distributions/gradle-$version-wrapper.jar.sha256")
+          echo "$expected  gradle/wrapper/gradle-wrapper.jar" | sha256sum -c -
+      - name: 還原簽署金鑰
+        env:
+          KEYSTORE_BASE64: ${{ secrets.OAS_RELEASE_KEYSTORE_BASE64 }}
+        run: |
+          test -n "$KEYSTORE_BASE64" || { echo "::error::沒有設定 OAS_RELEASE_KEYSTORE_BASE64"; exit 1; }
+          test -s android/release-cert-sha256.txt || { echo "::error::還沒登記正式憑證指紋 android/release-cert-sha256.txt"; exit 1; }
+          umask 077
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/oas-release.keystore"
+          echo "OAS_RELEASE_STORE=$RUNNER_TEMP/oas-release.keystore" >> "$GITHUB_ENV"
+      - name: 打包 Android 公開版
+        working-directory: android
+        env:
+          OAS_BUILD_PYTHON: python
+          OAS_RELEASE_STORE_PASSWORD: ${{ secrets.OAS_RELEASE_STORE_PASSWORD }}
+          OAS_RELEASE_KEY_ALIAS: ${{ secrets.OAS_RELEASE_KEY_ALIAS }}
+          OAS_RELEASE_KEY_PASSWORD: ${{ secrets.OAS_RELEASE_KEY_PASSWORD }}
+        run: |
+          export JAVA_HOME="$JAVA_HOME_17_X64"
+          bash ./gradlew --no-daemon assemblePublicRelease
+      - name: 刪掉簽署金鑰
+        if: always()
+        run: rm -f "$RUNNER_TEMP/oas-release.keystore"
+      - name: 檢查簽署與內容
+        run: |
+          apk=android/app/build/outputs/apk/public/release/app-public-release.apk
+          apksigner="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)/apksigner"
+          "$apksigner" verify --print-certs "$apk" > signers.txt
+          grep -q "Android Debug" signers.txt && { echo "::error::用的是測試金鑰"; exit 1; }
+          test "$(grep -c 'certificate SHA-256 digest' signers.txt)" = 1 || { echo "::error::簽署者不是剛好一個"; exit 1; }
+          grep -qi "certificate SHA-256 digest: $(tr -d '[:space:]' < android/release-cert-sha256.txt)" signers.txt || { echo "::error::憑證和登記的指紋不同"; exit 1; }
+          # 連 Chaquopy 包在裡面的壓縮檔一起拆開，找不該出現的檔案
+          python - "$apk" <<'PY'
+          import io, re, sys, zipfile
+          bad = re.compile(r"tag_pack_private|\.env(\.|$)|\.jks$|\.keystore$|local\.properties$", re.I)
+          def walk(data, prefix=""):
+              with zipfile.ZipFile(io.BytesIO(data)) as archive:
+                  for name in archive.namelist():
+                      content = archive.read(name)
+                      yield prefix + name
+                      if name.endswith((".imy", ".zip", ".whl", ".jar")) and zipfile.is_zipfile(io.BytesIO(content)):
+                          yield from walk(content, prefix + name + "!/")
+          found = [name for name in walk(open(sys.argv[1], "rb").read()) if bad.search(name)]
+          print("\n".join(found) or "沒有不該出現的檔案")
+          sys.exit(1 if found else 0)
+          PY
+          name="OAS-${GITHUB_REF_NAME}-android-arm64.apk"
+          mkdir -p out && cp "$apk" "out/$name"
+          (cd out && sha256sum "$name" > "$name.sha256" && cat "$name.sha256")
+      - name: 放進草稿 Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release upload "$GITHUB_REF_NAME" out/* --clobber
+          test "$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft)" = "true" || { echo "::error::Release 不是草稿"; exit 1; }

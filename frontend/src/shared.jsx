@@ -1,5 +1,6 @@
 import { createPortal } from 'react-dom'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { goPair, needsPairing } from './access.js'
 
 export const PAGE_SIZE = 120
 // 觸控螢幕（手機、平板）：沒有實體鍵盤與滑鼠，快捷鍵與按鍵提示用不到
@@ -102,11 +103,31 @@ export const api = (path, options = {}) => fetch(`/api${path}`, { headers: { 'Co
     if (response.status >= 502 && response.status <= 504) { reportOffline(); throw new Error('典藏館的資料服務沒有回應') }
     if (!response.ok) {
       // 欄位驗證失敗（422）時 detail 是陣列，取出每一條的說明
-      const detail = (await response.json().catch(() => ({}))).detail
+      const body = await response.json().catch(() => ({}))
+      // 區網模式下這台裝置沒配對或被撤銷：回到首頁，伺服器會改送配對頁
+      if (needsPairing(response.status, body)) { goPair(); throw new Error('這台裝置需要重新配對') }
+      const detail = body.detail
       throw new Error((Array.isArray(detail) ? detail.map(entry => entry?.msg).filter(Boolean).join('；') : detail) || '操作未完成')
     }
     return response.status === 204 ? null : response.json()
   })
+
+// 複製文字：HTTP（區網網址）下沒有 navigator.clipboard，改用隱藏的文字框＋execCommand。回傳有沒有複製成功
+export const copyText = async text => {
+  if (window.isSecureContext && navigator.clipboard?.writeText) {
+    try { await navigator.clipboard.writeText(text); return true } catch { /* 改用下面的方法 */ }
+  }
+  const box = document.createElement('textarea')
+  box.value = text
+  box.setAttribute('readonly', '')
+  box.style.cssText = 'position:fixed;top:0;left:0;opacity:0;pointer-events:none'
+  document.body.appendChild(box)
+  box.select()
+  let copied = false
+  try { copied = document.execCommand('copy') } catch { copied = false }
+  box.remove()
+  return copied
+}
 
 // 環境光取自封面主色（後端分析快取封面得出）；尚無主色時退回固定色盤。
 export const colourFor = item => item?.cover_colour || PALETTES[(item?.id || 0) % PALETTES.length]
@@ -225,6 +246,14 @@ export function Stars({ value = 0, onChange, allowHalf = false, small = false, i
     if (keys[event.key] !== undefined) { event.preventDefault(); event.stopPropagation(); onChange(Math.min(5, Math.max(0, value + keys[event.key]))) }
     else if (/^[0-5]$/.test(event.key)) { event.preventDefault(); event.stopPropagation(); onChange(Number(event.key)) }
   }
+  // 沒有 onChange（唯讀裝置）：只顯示，不能點、不能拖
+  if (!onChange) return <span className={`stars-wrap${small ? ' is-small' : ''}`}>
+    <span id={id} className={`stars is-static${small ? ' is-small' : ''}`} role="img" aria-label={value ? `評分 ${value} 顆星` : '未評分'}>
+      {[0, 1, 2, 3, 4].map(index => <span key={index} className="star" aria-hidden="true">
+        <span className="star-base">★</span><span className="star-fill" style={{ clipPath: `inset(0 ${100 - Math.max(0, Math.min(1, value - index)) * 100}% 0 0)` }}>★</span>
+      </span>)}
+    </span>
+  </span>
   return <span className={`stars-wrap${small ? ' is-small' : ''}`}>
     <span id={id} ref={row} className={`stars${small ? ' is-small' : ''}${dragging ? ' is-dragging' : ''}`} role="slider" tabIndex={0} aria-label="評分" aria-valuemin={0} aria-valuemax={5} aria-valuenow={value} aria-valuetext={value ? `${value} 顆星` : '未評分'}
       onKeyDown={onKeyDown} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerCancel}
@@ -318,3 +347,5 @@ export function CoverFace({ item, width = 360 }) {
   if (item.image_url && item.image_kind === 'icon') return <div className="cover-face is-icon"><img src={coverSrc(item)} alt="" loading="lazy" onError={fail} onLoad={event => event.currentTarget.naturalWidth < 2 && fail()} /><b>{name}</b><small>{item.kind || '網站'}</small></div>
   return <div className="cover-face is-empty"><i aria-hidden="true">{KIND_GLYPHS[item.kind] || '⌂'}</i><b>{name}</b><small>{item.kind || '尚無封面'}</small></div>
 }
+// 卡片大小：瀑布流每欄的最小寬度
+export const DENSITIES = [['s', '小', 160], ['m', '中', 220], ['l', '大', 300]]

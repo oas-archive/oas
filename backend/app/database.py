@@ -30,7 +30,7 @@ if DATABASE_URL.startswith("sqlite"):
         cursor.close()
 
 
-SCHEMA_VERSION = 1  # 結構版本，記在 PRAGMA user_version；只記錄目前補到哪一版，升級仍由 _add_missing_columns 與索引補建負責
+SCHEMA_VERSION = 2  # 2：加了 devices、device_events（區網模式）。結構版本，記在 PRAGMA user_version；只記錄目前補到哪一版，升級仍由 _add_missing_columns 與索引補建負責
 
 
 def snapshot_database(target: Path | str) -> None:
@@ -251,6 +251,33 @@ class CoverCache(Base):
     ratio: Mapped[float | None] = mapped_column(REAL)  # 高 / 寬，供前端瀑布流預留版面
     colour: Mapped[str | None] = mapped_column(String(7))  # 封面主色 #rrggbb；"" 表示已分析但無法取色
     fingerprint: Mapped[str | None] = mapped_column(String(16))  # 封面 dHash（16 位十六進位），找重複作品用；"" 表示無法計算
+
+
+class Device(Base):
+    """區網模式配對過的裝置（devices.py）。token 只存 SHA-256 雜湊；撤銷只填 revoked_at，不刪資料列（事件紀錄還要對得上名稱）。
+    不進備份（archive.export_backup 只列典藏資料）：裝置不該跟著備份搬到別台電腦。"""
+    __tablename__ = "devices"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(60), nullable=False, default="")
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    level: Mapped[str] = mapped_column(String(10), nullable=False, default="standard")  # readonly / standard
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_ip: Mapped[str] = mapped_column(String(45), nullable=False, default="")
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class DeviceEvent(Base):
+    """區網模式的事件（配對成功／失敗、撤銷、未配對的嘗試…），只留最近 200 筆。不記 token、不記配對碼。"""
+    __tablename__ = "device_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    ip: Mapped[str] = mapped_column(String(45), nullable=False, default="")
+    device_id: Mapped[int | None] = mapped_column(Integer)
+    detail: Mapped[str] = mapped_column(String(200), nullable=False, default="")  # 裝置名稱或路徑
 
 
 _columns_lock = threading.Lock()

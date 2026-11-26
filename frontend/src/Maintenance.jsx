@@ -4,14 +4,15 @@ import { api, formatBytes, errorNote } from './shared.jsx'
 import { backupText, jobText } from './Sidebar.jsx'
 import PublicSettings from './PublicSettings.jsx'
 import { isPublic, preferences } from './preferences.js'
+import { isLocalMachine } from './access.js'
 
 export default function Maintenance({ notify, reload, onBackup }) {
   const [savingCovers, setSavingCovers] = useState(() => preferences().save_covers === true)
   return <div className="insight-body">
     <header className="insight-head"><div><h2>維護</h2><p>這些工作會在背景自動進行，平常不用動；補不到的作品會列在「待整理」。</p></div></header>
     <div className="maintenance-blocks">
-      {isPublic() && <PublicSettings notify={notify} onCoversChanged={setSavingCovers} />}
-      <BackupBlock onBackup={onBackup} />
+      {isPublic() && isLocalMachine() && <PublicSettings notify={notify} onCoversChanged={setSavingCovers} />}
+      {onBackup && <BackupBlock onBackup={onBackup} />}
       {savingCovers && <CoverCacheBlock notify={notify} />}
       <RefreshBlock notify={notify} />
       <LinkCheckBlock notify={notify} reload={reload} />

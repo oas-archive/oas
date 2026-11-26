@@ -71,7 +71,7 @@ export const playShowcaseClose = target => {
 
 // 展示頁：取代右側抽屜。左側完整比例的封面，右側預設為閱讀模式；按「編輯」或 E 才切換為表單。
 // 封面從卡片位置放大進場（flipFrom 是 App 記下的卡片位置）、關閉時縮回原卡片（playShowcaseClose）。
-export default function Showcase({ item, link, prev, next, direction = 0, flipFrom, coverHint, warm = false, dirtyRef, onNavigate, onClose, onQuick, onSave, onRemove, onTag, onVisit, onOpenDuplicate, onFillBlanks, onRelinked, collections = [], onMembership, onCreateCollection, onBulk }) {
+export default function Showcase({ readOnly = false, item, link, prev, next, direction = 0, flipFrom, coverHint, warm = false, dirtyRef, onNavigate, onClose, onQuick, onSave, onRemove, onTag, onVisit, onOpenDuplicate, onFillBlanks, onRelinked, collections = [], onMembership, onCreateCollection, onBulk }) {
   const [mode, setMode] = useState(item.id ? 'view' : 'edit')
   const [related, setRelated] = useState(null)
   const [loadedSrc, setLoadedSrc] = useState('')
@@ -245,12 +245,13 @@ export default function Showcase({ item, link, prev, next, direction = 0, flipFr
       if (mode !== 'view' || isEditing() || event.ctrlKey || event.metaKey || event.altKey || document.querySelector('.palette')) return
       if (event.key === 'ArrowLeft' && prev) { event.preventDefault(); step(prev) }
       if (event.key === 'ArrowRight' && next) { event.preventDefault(); step(next) }
+      if (readOnly) return  // 唯讀裝置（區網模式）：不能編輯、評分
       if (event.key.toLowerCase() === 'e') { event.preventDefault(); setMode('edit') }
       if (/^[0-5]$/.test(event.key) && item.id) { event.preventDefault(); onQuick(item, { rating: Number(event.key) }).catch(() => {}) }
     }
     window.addEventListener('keydown', listener)
     return () => window.removeEventListener('keydown', listener)
-  }, [mode, prev, next, item, onNavigate, onQuick])
+  }, [mode, prev, next, item, onNavigate, onQuick, readOnly])
 
   const ratio = isFaceCover(item) && !(mode === 'edit' && preview) ? 1.15 : coverRatio(item)
   // 先顯示卡片上已經載入、解碼好的那張圖（不必再要一張縮圖）；不是從卡片開的就用小縮圖，原圖等動畫結束再淡入
@@ -278,24 +279,25 @@ export default function Showcase({ item, link, prev, next, direction = 0, flipFr
           <h1 className="showcase-title">{shortTitle(item)}</h1>
           {shortTitle(item) !== titleFor(item) && <FullTitle key={item.id} title={titleFor(item)} />}
           <div className="showcase-rate">
-            <Stars value={item.rating} allowHalf onChange={rating => onQuick(item, { rating }).catch(() => {})} />
+            <Stars value={item.rating} allowHalf onChange={readOnly ? null : rating => onQuick(item, { rating }).catch(() => {})} />
             <b>{item.rating > 0 ? Number(item.rating).toFixed(1) : '未評分'}</b>
-            <Dropdown ariaLabel="閱讀狀態" value={item.status} options={statusOptions(item.status)} onChange={status => onQuick(item, { status }).catch(() => {})} />
+            {!readOnly && <Dropdown ariaLabel="閱讀狀態" value={item.status} options={statusOptions(item.status)} onChange={status => onQuick(item, { status }).catch(() => {})} />}
           </div>
-          {item.id && (item.status === '閱讀中' || item.progress) && <ProgressField key={`${item.id}-${item.progress}`} item={item} onQuick={onQuick} />}
+          {readOnly ? item.progress && <p className="showcase-progress"><span>看到 {item.progress}</span></p>
+            : item.id && (item.status === '閱讀中' || item.progress) && <ProgressField key={`${item.id}-${item.progress}`} item={item} onQuick={onQuick} />}
           <div className="showcase-actions">
             {link ? <a className="primary" href={link} target="_blank" rel="noreferrer noopener" onClick={() => onVisit(item)}>前往閱讀 ↗</a> : <span className="primary is-disabled" title="此來源尚未設定網址規則">無來源連結</span>}
-            <button type="button" className="ghost" onClick={() => setMode('edit')}>編輯 <kbd>E</kbd></button>
-            {item.id && <CollectionMenu item={item} collections={collections} onMembership={onMembership} onCreate={onCreateCollection} />}
-            {item.id && !item.link_dead && !altOpen && <button type="button" className="ghost subtle" onClick={() => setAltOpen(true)} title="作品在來源網站被下架、找不到時">來源失效？</button>}
+            {!readOnly && <button type="button" className="ghost" onClick={() => setMode('edit')}>編輯 <kbd>E</kbd></button>}
+            {item.id && !readOnly && <CollectionMenu item={item} collections={collections} onMembership={onMembership} onCreate={onCreateCollection} />}
+            {item.id && !readOnly && !item.link_dead && !altOpen && <button type="button" className="ghost subtle" onClick={() => setAltOpen(true)} title="作品在來源網站被下架、找不到時">來源失效？</button>}
           </div>
           {twins.map(entry => <p key={entry.id} className="fetch-note is-warn">可能和「{entry.title || entry.code}」（{entry.source_name}）重複<button type="button" onClick={() => onOpenDuplicate(entry.id)}>開啟它</button></p>)}
-          {item.id && (item.link_dead || altOpen) && <AlternativesPanel item={item} reveal={altOpen} onQuick={onQuick} onRelinked={onRelinked} onOpenOwned={onOpenDuplicate} onClose={() => setAltOpen(false)} />}
+          {item.id && !readOnly && (item.link_dead || altOpen) && <AlternativesPanel item={item} reveal={altOpen} onQuick={onQuick} onRelinked={onRelinked} onOpenOwned={onOpenDuplicate} onClose={() => setAltOpen(false)} />}
           {item.tags.length > 0 && <div className="showcase-tag-groups">{groupTags(item.tags, categories).map(group => <div key={group.key} className="showcase-tags">
             <span className="tag-group-label">{group.label}</span>
             {group.names.map(tag => <button key={tag} type="button" onClick={() => onTag(tag)} title={`在書庫中查看 #${tag}`}>{group.key === 'tag' ? '#' : ''}{tag}</button>)}
           </div>)}</div>}
-          <blockquote className={`showcase-note${item.note ? '' : ' is-empty'}`} onClick={() => !item.note && setMode('edit')}>{item.note || `還沒有筆記。${TOUCH ? '點這裡' : '按 E '}寫下只屬於你的閱讀記憶。`}</blockquote>
+          {(item.note || !readOnly) && <blockquote className={`showcase-note${item.note ? '' : ' is-empty'}`} onClick={() => !item.note && !readOnly && setMode('edit')}>{item.note || `還沒有筆記。${TOUCH ? '點這裡' : '按 E '}寫下只屬於你的閱讀記憶。`}</blockquote>}
           <dl className="showcase-meta">
             <div><dt>收錄</dt><dd>{formatDate(item.created_at) || '—'}</dd></div>
             <div><dt>閱讀</dt><dd>{sinceText(item.last_opened_at)}</dd></div>
@@ -313,7 +315,7 @@ export default function Showcase({ item, link, prev, next, direction = 0, flipFr
         </> : <EditForm item={item} link={link} onBulk={onBulk} onPreview={setPreview} onOpenDuplicate={onOpenDuplicate} onFillBlanks={onFillBlanks} dirtyRef={dirtyRef} onCancel={async () => { if (dirtyRef?.current && !await confirmLeave()) return; if (dirtyRef) dirtyRef.current = false; if (item.id) setMode('view'); else onClose() }} onSave={async payload => { const saved = await onSave(payload); if (saved) setMode('view'); return saved }} onRemove={onRemove} />}
       </section>
     </div>
-    {mode === 'view' && <p className="showcase-keys" aria-hidden="true"><kbd>←</kbd><kbd>→</kbd> 切換　<kbd>1</kbd>–<kbd>5</kbd> 評分　<kbd>E</kbd> 編輯　<kbd>Esc</kbd> 關閉</p>}
+    {mode === 'view' && <p className="showcase-keys" aria-hidden="true"><kbd>←</kbd><kbd>→</kbd> 切換　{!readOnly && <><kbd>1</kbd>–<kbd>5</kbd> 評分　<kbd>E</kbd> 編輯　</>}<kbd>Esc</kbd> 關閉</p>}
   </div>
 }
 

@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="color-scheme" content="dark" />
+<meta name="theme-color" content="#080b12" />
+<meta name="referrer" content="no-referrer" />
+<title>配對這台裝置 — OAS</title>
+<link rel="icon" href="/favicon.png" />
+<style>
+  /* 配對頁自己的樣式（不載主程式的 CSS 與字型）；顏色與尺寸和主程式一致 */
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; background: #080b12; color: #eef1ff; }
+  body { font: 14px/1.6 Inter, "Noto Sans TC", "Microsoft JhengHei", "PingFang TC", system-ui, sans-serif; display: grid; place-items: center; min-height: 100svh; padding: 24px 16px; }
+  main { width: min(420px, 100%); background: #121827; border: 1px solid rgba(255,255,255,.10); border-radius: 18px; padding: 28px 24px 24px; }
+  h1 { font: 700 22px/1.35 "Noto Serif TC", "Noto Sans TC", serif; margin: 0 0 8px; }
+  p { margin: 0; color: #c4cce2; }
+  .lead { margin-bottom: 22px; font-size: 14px; }
+  label { display: block; font-size: 12px; color: #8a94b4; margin: 0 0 6px; }
+  .field { margin-bottom: 16px; }
+  input { width: 100%; font: inherit; color: #eef1ff; background: #0c1020; border: 1px solid rgba(255,255,255,.12); border-radius: 9px; padding: 10px 12px; outline: none; }
+  input:focus { border-color: rgba(140,130,255,.7); }
+  #pair-code { font-size: 28px; letter-spacing: .12em; text-align: center; font-variant-numeric: tabular-nums; padding: 10px 8px; }
+  #pair-code::placeholder { color: #7f8aab; letter-spacing: .12em; }
+  button { width: 100%; min-height: 44px; font: 600 14px/1 inherit; font-family: inherit; color: #080b12; background: #8c82ff; border: 0; border-radius: 9px; cursor: pointer; transition: scale .16s cubic-bezier(.23,1,.32,1); }
+  button:active:not(:disabled) { scale: .97; }
+  button:disabled { background: rgba(255,255,255,.06); color: #7f8aab; cursor: default; }
+  button:focus-visible, input:focus-visible { outline: 2px solid #8c82ff; outline-offset: 2px; }
+  #pair-note { min-height: 22px; margin-top: 14px; font-size: 13px; }
+  #pair-note[data-kind="error"] { color: #e09a98; }
+  #pair-note[data-kind="ok"] { color: #8fcf8a; }
+  .help { margin-top: 18px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,.06); font-size: 12px; color: #8a94b4; }
+  @media (prefers-reduced-motion: reduce) { button { transition: none; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>配對這台裝置</h1>
+  <p class="lead">在電腦的典藏館打開「整理 → 其他裝置」，按「新增裝置」，把畫面上的 8 位數配對碼輸入到下面。</p>
+  <form id="pair-form" autocomplete="off" novalidate>
+    <div class="field">
+      <label for="pair-code">配對碼</label>
+      <input id="pair-code" name="code" inputmode="numeric" autocomplete="one-time-code" placeholder="0000 0000" maxlength="20" required autofocus />
+    </div>
+    <div class="field">
+      <label for="pair-name">這台裝置的名稱（電腦上的裝置清單會顯示）</label>
+      <input id="pair-name" name="name" maxlength="60" />
+    </div>
+    <button id="pair-submit" type="submit" disabled>配對並進入典藏館</button>
+    <p id="pair-note" role="status" aria-live="polite"></p>
+  </form>
+  <p class="help">配對碼 5 分鐘內有效、只能用一次。配對後這台裝置 90 天內不用再輸入；電腦要開著典藏館視窗，這裡才連得到。</p>
+</main>
+<script type="module" src="/src/pair.js"></script>
+</body>
+</html>

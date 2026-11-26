@@ -33,6 +33,36 @@ if (Test-Path (Join-Path $home_ 'data\oas.db')) {
     $backupDir = Join-Path $dataDir 'backups'
 }
 
+# 區網模式：資料夾下 remote.json 為 {"enabled": true} 才開（設定頁的開關寫的）。
+# 沒有檔案、讀不懂、不是物件、enabled 不是 true（字串 "true"、大小寫不同的鍵都不算）＝關閉，和後端 devices.remote_next 判斷相同。
+# 用 UTF8.GetString 不去掉 BOM：開頭有 BOM 時後端讀不懂，這裡也一樣算關閉。
+function Test-RemoteMode([string]$folder) {
+    try {
+        $bytes = [System.IO.File]::ReadAllBytes((Join-Path $folder 'remote.json'))
+        $value = [System.Text.Encoding]::UTF8.GetString($bytes) | ConvertFrom-Json
+        if ($value -isnot [System.Management.Automation.PSCustomObject]) { return $false }
+        $enabled = @($value.PSObject.Properties | Where-Object { $_.Name -ceq 'enabled' })
+        return ($enabled.Count -eq 1) -and ($enabled[0].Value -is [bool]) -and $enabled[0].Value
+    } catch { return $false }
+}
+
+# uvicorn 的參數：平常只綁 127.0.0.1（和沒有區網模式時完全相同）；區網模式改 0.0.0.0（只有 IPv4）。
+function Get-ServerArguments([bool]$remote, [int]$listenPort) {
+    $bindHost = if ($remote) { '0.0.0.0' } else { '127.0.0.1' }
+    @('-m', 'uvicorn', 'app.main:app', '--host', $bindHost, '--port', "$listenPort")
+}
+
+# 給區網模式提醒用的這台電腦區網 IPv4（私人網段），找不到就空。
+function Get-LanAddresses {
+    try {
+        @([System.Net.Dns]::GetHostAddresses([System.Net.Dns]::GetHostName()) |
+            Where-Object { $_.AddressFamily -eq 'InterNetwork' -and $_.ToString() -match '^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)' } |
+            ForEach-Object { $_.ToString() } | Sort-Object -Unique)
+    } catch { @() }
+}
+
+$remote = Test-RemoteMode $dataDir
+
 function Test-Web {
     try { (Invoke-WebRequest -Uri "$api/api/health" -UseBasicParsing -TimeoutSec 2).StatusCode -eq 200 } catch { $false }
 }
@@ -60,12 +90,12 @@ function Get-AppWindows {
         Where-Object { $_.CommandLine -and $_.CommandLine.Contains($profileDir) })
 }
 
-function Open-AppWindow([string]$target) {
+function Open-AppWindow([string]$target, [string]$fragment = '') {
     $browser = Find-Browser
     if (-not $browser) { Start-Process $target; return $false }
     New-Item -ItemType Directory -Force $profileDir | Out-Null
     # 路徑含空格與括號（Omni-Archive System (OAS)），需轉成 file:/// 網址並加上引號，否則會被拆成多個參數。
-    if (Test-Path $target) { $target = ([Uri](Resolve-Path $target).Path).AbsoluteUri }
+    if (Test-Path $target) { $target = ([Uri](Resolve-Path $target).Path).AbsoluteUri + $fragment }
     Start-Process $browser -ArgumentList @("--app=`"$target`"", "--user-data-dir=`"$profileDir`"", '--window-size=1440,900', '--no-first-run', '--no-default-browser-check')
     return $true
 }
@@ -109,14 +139,24 @@ function Start-Server {
     New-Item -ItemType Directory -Force $logDir, $dataDir, $backupDir | Out-Null
     $env:OAS_DATA_DIR = $dataDir
     $env:OAS_BACKUP_DIR = $backupDir
+    # 區網模式才設 OAS_REMOTE=1；關閉時連外面留下的值也清掉，確定是「只有本機」
+    if ($remote) { $env:OAS_REMOTE = '1' } else { Remove-Item Env:OAS_REMOTE -ErrorAction SilentlyContinue }
     # pythonw：不會跳出黑色主控台視窗；輸出寫到 logs\server.log
     Start-Process -FilePath $pythonw -WorkingDirectory $backend -PassThru `
-        -ArgumentList @('-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', "$port") `
+        -ArgumentList (Get-ServerArguments $remote $port) `
         -RedirectStandardOutput (Join-Path $logDir 'server.log') -RedirectStandardError (Join-Path $logDir 'server-error.log')
 }
 
 $ready = Test-Web
-$watching = Open-AppWindow ($(if ($ready) { $url } else { (Join-Path $PSScriptRoot 'starting.html') }))
+# 區網模式的提醒：啟動畫面（#lan=IP:埠,…）與主控台各一行；服務已在執行時不是這次啟動的，不提醒。
+$lanFragment = ''
+if ($remote -and -not $ready) {
+    $lanUrls = @(Get-LanAddresses | ForEach-Object { "${_}:$port" })
+    $lanFragment = '#lan=' + ($lanUrls -join ',')
+    $shown = if ($lanUrls.Count) { ($lanUrls | ForEach-Object { "http://$_/" }) -join '、' } else { "http://<這台電腦的 IP>:$port/" }
+    Write-Host "區網模式：其他裝置可用 $shown 連線；關閉典藏館視窗服務就會停止。"
+}
+$watching = Open-AppWindow ($(if ($ready) { $url } else { (Join-Path $PSScriptRoot 'starting.html') })) $lanFragment
 
 # 已有另一個啟動器在監看視窗（重複點擊捷徑）：只開視窗，不重複監看。
 $mutex = New-Object System.Threading.Mutex($false, 'Local\OAS-Launcher')

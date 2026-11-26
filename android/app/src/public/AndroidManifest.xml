@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Android 12 起 allowBackup=false 擋不住換機轉移，要另外宣告。公開版的收藏不該被自動帶走或上傳，要搬資料用 App 內的匯出 -->
+    <application android:dataExtractionRules="@xml/data_extraction_rules" />
+</manifest>

@@ -20,7 +20,7 @@ from .covers import CoverError, check_url, safe_urlopen
 from .database import Resource, Source
 from .pagetext import TAG_WINDOW, MetadataError, _between, _defuse, _meta, _src_after, _tags, _unique  # noqa: F401
 from .site_parsers import PARSERS, parse_hanime1, parse_hentaihaven, parse_jm, parse_missav, parse_nhentai, parse_pornhub, parse_wnacg  # noqa: F401
-from .sites import HOST_ALIASES, HOST_KINDS, KNOWN_COVERS, LAST_SEGMENT_HOSTS, MIRRORS, MISSING_PAGES, NUMBER_URL, PATH_REWRITES, PROTECTED_HOSTS, SHORT_CODE_URLS, TITLE_SUFFIXES, VERSION_SUFFIXES  # noqa: F401
+from .sites import API_PAGES, HOST_ALIASES, HOST_KINDS, KNOWN_COVERS, LAST_SEGMENT_HOSTS, MIRRORS, MISSING_PAGES, NUMBER_URL, PATH_REWRITES, PROTECTED_HOSTS, SHORT_CODE_URLS, TITLE_SUFFIXES, VERSION_SUFFIXES  # noqa: F401
 
 USER_AGENT = "OAS/0.8 (personal archive metadata)"
 MAX_BYTES = 2 * 1024 * 1024
@@ -168,19 +168,31 @@ def resolve(db: Session, url: str) -> tuple[str, str]:
     return DEFAULT_SOURCE, url.strip()
 
 
+def api_url(url: str) -> str:
+    """有官方 API 的網站（sites.API_PAGES）：作品頁網址 → API 網址；其他網址回傳空字串。"""
+    for pattern, template in API_PAGES:
+        if match := pattern.match(url.strip()):
+            return template.format(match.group(1))
+    return ""
+
+
 def _get(url: str) -> str:
+    """讀作品頁；有官方 API 的網站改讀 API（回傳 JSON 文字，由 site_parsers 解析）。"""
+    api = api_url(url)
     try:
-        check_url(url)
+        check_url(api or url)
     except CoverError as error:
         raise MetadataError(str(error)) from error
-    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "text/html,application/xhtml+xml"})
+    accept = "application/json" if api else "text/html,application/xhtml+xml"
+    request = urllib.request.Request(api or url, headers={"User-Agent": USER_AGENT, "Accept": accept})
     try:
         with safe_urlopen(request, timeout=TIMEOUT_SECONDS) as response:
             body = response.read(MAX_BYTES)
             charset = response.headers.get_content_charset() or "utf-8"
             final_url = response.geturl() or url
     except urllib.error.HTTPError as error:
-        protected = error.code in (403, 429, 503) and "cloudflare" in (error.headers.get("server") or "").lower()
+        # 官方 API 回 429 是正常的次數限制（status 429 已算限流、會退避），不是防護頁，不要叫你改用書籤
+        protected = not api and error.code in (403, 429, 503) and "cloudflare" in (error.headers.get("server") or "").lower()
         raise MetadataError(
             "此網站有防護，無法由伺服器讀取。請在該頁面使用「收錄到 OAS」書籤。" if protected else f"來源回應 HTTP {error.code}",
             blocked=protected, status=error.code,
@@ -329,7 +341,8 @@ def describe(db: Session, url: str, fetch: bool = True, title: str = "", html_pa
     }
     if fetch or html_page:
         try:
-            parsed = parse(url, html_page or _get(url))  # html_page：手機 App 在隱藏的瀏覽器讀到的頁面（有防護的網站伺服器讀不到）
+            # html_page：手機 App 在隱藏的瀏覽器讀到的頁面（有防護的網站伺服器讀不到）；有官方 API 的網站一律讀 API
+            parsed = parse(url, _get(url) if fetch and api_url(url) else html_page or _get(url))
             parsed.setdefault("categories", {})
             canonical = parsed.pop("canonical", "")
             if canonical and (key := resolve(db, canonical))[0] == source_name and key[1] != code:  # 章節編號 → 作品的正式編號

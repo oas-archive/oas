@@ -5,7 +5,7 @@
 import os
 from pathlib import Path
 
-VERSION = "0.20.79"
+VERSION = "0.20.83"
 
 
 def _split(raw: str) -> list[str]:
@@ -57,4 +57,16 @@ def detect_platform(env: str | None) -> str:
 EDITION = detect_edition(os.getenv("OAS_EDITION"), APP_DIR)
 PLATFORM = detect_platform(os.getenv("OAS_PLATFORM"))
 TOKEN_COOKIE = "oas_token"
+
+
+def detect_remote(env: str | None, platform: str) -> bool:
+    """區網模式：OAS_REMOTE=1 才開，預設關閉。手機 App 一律不開（服務本來就在手機裡，用通行碼）。"""
+    return env == "1" and platform != "android"
+
+
+# 區網模式：家裡其他裝置可以用瀏覽器連到這台電腦（要配對）。啟動器讀 REMOTE_FILE（設定頁的開關寫的）決定要不要設 OAS_REMOTE=1
+# 並改綁 0.0.0.0；關閉時一切與沒有這個功能時相同。規則在 access.py、devices.py。
+REMOTE = detect_remote(os.getenv("OAS_REMOTE"), PLATFORM)
+REMOTE_FILE = DATA_DIR / "remote.json"  # {"enabled": true/false}：下次啟動要不要開區網模式
+DEVICE_COOKIE = "oas_device"
 IMAGE_ENGINE = os.getenv("OAS_IMAGE_ENGINE") or "pillow"  # "android"：手機公開版用系統內建的解碼器，見 imaging.py

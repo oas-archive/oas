@@ -28,7 +28,7 @@ EMBED_URL = f"https://www.python.org/ftp/python/{PYTHON_VERSION}/{EMBED}"
 # 2026-11-12 查證：sigstore verify identity 驗證通過，自行下載算出的值相同。下載頁不公布 SHA-256，所以不從那裡取；換 PYTHON_VERSION 時要一起換。
 EMBED_SHA256 = "9e35319bffedab8b36ad44d8f377cb4f1733bcec257a0b6d04d94f01486ddb38"
 # 從 HEAD 放進免安裝版的檔案（目錄以 / 結尾）
-INCLUDE = ["backend/app/", "tools/launch.ps1", "tools/starting.html", "tools/create-shortcut.ps1", "tools/oas.ico", "tools/oas-icon.png", "tools/oas-icon.svg"]
+INCLUDE = ["backend/app/", "tools/launch.ps1", "tools/enable-lan-firewall.ps1", "tools/starting.html", "tools/create-shortcut.ps1", "tools/oas.ico", "tools/oas-icon.png", "tools/oas-icon.svg"]
 EXCLUDE = {"backend/app/data/tag_pack_private.json"}  # 私人翻譯補充不放進免安裝版
 STARTER = '''@echo off
 rem 開啟 OAS 典藏館（也可以執行 tools\\create-shortcut.ps1 在桌面建立捷徑）

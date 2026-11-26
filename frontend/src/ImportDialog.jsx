@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react'
 import { canReadPages, queueReads } from './pageReader.js'
 import { kickProgress, useProgress } from './progress.js'
-import { api, confirmLeave, errorNote, hideBroken, TOUCH, useFocusTrap, imageSrc } from './shared.jsx'
+import { api, confirmLeave, copyText, errorNote, hideBroken, TOUCH, useFocusTrap, imageSrc } from './shared.jsx'
 import { PROTECTED } from './sites.js'
 
 const SHOWN_HINTS = 4
@@ -136,13 +136,9 @@ export default function ImportDialog({ close, notify, onDone, onUndo, dirtyRef }
   }
   // 剪貼簿不能用時（舊的 WebView、沒有權限）改成直接填進輸入框；已經有內容就不蓋掉
   const copyFormat = async () => {
-    try {
-      await navigator.clipboard.writeText(FORMAT)
-      notify('已複製格式，貼到記事本填好，再整段貼回來')
-    } catch {
-      if (text.trim()) notify('這台裝置不能複製；清空輸入框再按一次，會直接填進來')
-      else { setText(FORMAT); notify('這台裝置不能複製，已直接填進輸入框') }
-    }
+    if (await copyText(FORMAT)) notify('已複製格式，貼到記事本填好，再整段貼回來')
+    else if (text.trim()) notify('這台裝置不能複製；清空輸入框再按一次，會直接填進來')
+    else { setText(FORMAT); notify('這台裝置不能複製，已直接填進輸入框') }
   }
   const again = fresh => {
     setReport(null)

@@ -235,3 +235,30 @@ class BackupPayload(BaseModel):
     tag_health_keep: list[str] = []
     tag_pairs_keep: list[str] = []
     duplicate_dismissals: list[list[dict]] = []
+
+
+# ---------- 區網模式的裝置（routers/devices.py） ----------
+
+DeviceLevel = Literal["readonly", "standard"]  # 不提供「完整」：危險操作只限電腦本機
+
+
+class PairRequest(BaseModel):
+    code: str = Field(max_length=32)  # 8 位數字；空白與連字號會先去掉
+    name: str = Field(default="", max_length=60)
+
+
+class PairingCreate(BaseModel):
+    level: DeviceLevel = "standard"
+
+
+class DevicePatch(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=60)
+    level: DeviceLevel | None = None
+
+
+class RemoteToggle(BaseModel):
+    enabled: bool
+
+
+class FirewallAction(BaseModel):
+    remove: bool = False  # True：刪除「OAS 區網」規則（enable-lan-firewall.ps1 -Remove）

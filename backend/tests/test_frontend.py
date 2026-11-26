@@ -72,3 +72,84 @@ def test_assets_never_reach_network_paths(tmp_path, monkeypatch):
     for path in ("/assets/%5C%5Cevil%5Cshare%5Ca.js", "/assets/%5Cevil.js", "/assets/C:%5Cwindows%5Cwin.ini", "/assets/a.js:stream"):
         assert site.get(path).status_code == 404, path
     assert looked_up == []
+
+
+# ---------- 區網模式：還沒配對的裝置只拿得到配對頁 ----------
+
+LAN_HOST = "192.168.50.10:8080"  # 虛構的區網網址
+PHONE = "192.168.50.21"
+
+
+def make_lan_site(tmp_path, monkeypatch):
+    """和 main.py 相同的驗證層＋配對 API＋網頁（含配對頁），區網模式開著。回傳（建 client 的函式, 網頁資料夾）。"""
+    from app import devices, security, settings
+    from app.routers import devices as device_routes
+
+    dist = tmp_path / "dist"
+    make_site(dist)
+    (dist / "pair.html").write_text("<html>PAIR</html>", encoding="utf-8")
+    (dist / "pair").mkdir()
+    (dist / "pair" / "pair-abc.js").write_text("console.log('pair')", encoding="utf-8")
+    monkeypatch.setattr(settings, "REMOTE", True)
+    monkeypatch.setattr(settings, "REMOTE_FILE", tmp_path / "remote.json")
+    devices.reset_memory()
+    app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+    security.install(app)
+    app.include_router(device_routes.public)
+    app.include_router(device_routes.router)
+    assert frontend.install(app, dist)
+
+    def make(ip, host=LAN_HOST):
+        return TestClient(app, client=(ip, 50123), base_url=f"http://{host}", headers={"Content-Type": "application/json"})
+    return make
+
+
+def test_unpaired_device_only_gets_the_pair_page(client, tmp_path, monkeypatch):
+    make = make_lan_site(tmp_path, monkeypatch)
+    phone = make(PHONE)
+    for path in ("/", "/?page=taste", "/some/page", "/index.html", "/pair.html"):
+        response = phone.get(path)
+        assert response.status_code == 200 and response.text == "<html>PAIR</html>", path
+        assert response.headers["cache-control"] == "no-cache"
+    assert phone.get("/pair/pair-abc.js").text == "console.log('pair')"  # 配對頁自己的程式
+    assert phone.get("/favicon.png").content == b"png"
+    asset = phone.get("/assets/index-abc.js")  # 主程式要配對後才給
+    assert asset.status_code == 401 and asset.json()["pair"] is True
+    for path in ("/api/no-such-api", "/api/resources"):  # 不存在的 API 也回 401，分不出哪些存在
+        assert phone.get(path).status_code == 401, path
+    assert phone.get("/docs").status_code == 401
+    made_up = make(PHONE)
+    made_up.cookies.set("oas_device", "made-up-token")
+    assert made_up.get("/").text == "<html>PAIR</html>"
+
+
+def test_paired_device_gets_the_app(client, tmp_path, monkeypatch):
+    make = make_lan_site(tmp_path, monkeypatch)
+    local = make("127.0.0.1", "localhost:8080")
+    assert local.get("/").text == "<html>OAS</html>"  # 電腦本機不用配對
+    code = local.post("/api/devices/pairing", json={"level": "readonly"}).json()["code"]
+    phone = make(PHONE)
+    assert phone.post("/api/pair", json={"code": code, "name": "測試手機"}).status_code == 200
+    assert phone.get("/").text == "<html>OAS</html>"
+    assert phone.get("/assets/index-abc.js").status_code == 200
+    assert phone.get("/api/no-such-api").status_code == 404
+    # 撤銷後回到配對頁
+    device_id = local.get("/api/devices").json()["items"][0]["id"]
+    local.post(f"/api/devices/{device_id}/revoke")
+    assert phone.get("/").text == "<html>PAIR</html>"
+    assert phone.get("/assets/index-abc.js").status_code == 401
+
+
+def test_unpaired_without_pair_page_gets_nothing(client, tmp_path, monkeypatch):
+    make = make_lan_site(tmp_path, monkeypatch)
+    (tmp_path / "dist" / "pair.html").unlink()
+    response = make(PHONE).get("/")
+    assert response.status_code == 401 and "OAS" not in response.text
+
+
+def test_remote_off_serves_the_app_as_before(tmp_path, monkeypatch):
+    from app import settings
+    monkeypatch.setattr(settings, "REMOTE", False)
+    site = make_site(tmp_path / "dist")
+    (tmp_path / "dist" / "pair.html").write_text("<html>PAIR</html>", encoding="utf-8")
+    assert site.get("/").text == "<html>OAS</html>"

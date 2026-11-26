@@ -1,12 +1,44 @@
-"""各網站作品頁的解析規則。要拿掉某個網站：刪掉它的函式與 PARSERS 那一項，並改 sites.py（見 docs/架構.md）。"""
+"""各網站作品頁的解析規則。要拿掉某個網站：刪掉它的函式與 PARSERS 那一項，並改 sites.py。"""
 import html
+import json
 import re
 from urllib.parse import unquote
 
 from .pagetext import MetadataError, _between, _meta, _src_after, _tags, _unique
 
 
+# nhentai 官方 API 的封面路徑（galleries/…/cover.jpg）接在縮圖伺服器後面；標籤依舊作品頁的區塊順序排
+NHENTAI_THUMBS = "https://t3.nhentai.net/"
+NHENTAI_TAG_ORDER = ("parody", "character", "tag", "artist", "group", "language", "category")
+
+
+def parse_nhentai_api(body: str) -> dict:
+    """nhentai 官方 API（/api/v2/galleries/編號）的 JSON：標題用英文標題（和舊作品頁封面的 alt 相同），沒有時用日文標題。"""
+    try:
+        data = json.loads(body)
+    except ValueError:
+        data = None
+    if not isinstance(data, dict):  # 格式不對時當成沒讀到（和作品頁解析不到一樣），不丟例外
+        return {"title": "", "image_url": "", "tags": []}
+    titles = data.get("title") if isinstance(data.get("title"), dict) else {}
+    title = next((str(titles[key]) for key in ("english", "japanese", "pretty") if titles.get(key)), "")
+    cover = data.get("cover") if isinstance(data.get("cover"), dict) else {}
+    path = str(cover.get("path") or "")
+    image = path if path.startswith(("http://", "https://")) else NHENTAI_THUMBS + path.lstrip("/") if path else ""
+    tags = [tag for tag in data.get("tags") or [] if isinstance(tag, dict) and str(tag.get("name") or "").strip()]
+    order = {kind: index for index, kind in enumerate(NHENTAI_TAG_ORDER)}
+    tags.sort(key=lambda tag: order.get(tag.get("type"), len(order)))  # sort 是穩定排序：同一類保持 API 的順序
+    pages = data.get("num_pages")
+    return {
+        "title": title, "image_url": image, "tags": [str(tag["name"]).strip() for tag in tags],
+        "categories": {str(tag["name"]).strip(): str(tag.get("type") or "tag") for tag in tags},
+        "pages": pages if isinstance(pages, int) and not isinstance(pages, bool) else None,
+    }
+
+
 def parse_nhentai(page: str) -> dict:
+    if page.lstrip().startswith("{"):  # metadata._get 改讀官方 API 時拿到的是 JSON
+        return parse_nhentai_api(page)
     alt, image = "", ""
     start = page.find('id="cover"')
     for tag in _tags(page[start:], "img", 20) if start >= 0 else ():
